@@ -1,0 +1,138 @@
+.record-button {
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  background-color: #fff;
+  border: 2px solid #ccc;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  font-size: 24px;
+  transition: all 0.3s ease;
+  margin-bottom: 15px;
+  color: #444;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  outline: none;
+}
+
+.record-button:hover {
+  background-color: #f5f5f5;
+}
+
+.record-button.recording {
+  background-color: #ff4a4a;
+  border-color: #ff4a4a;
+  color: white;
+  animation: pulse 1.5s infinite;
+  box-shadow: 0 0 0 0 rgba(255, 74, 74, 1);
+}
+
+.record-button:active {
+  transform: scale(0.95);
+}
+
+.status {
+  font-size: 16px;
+  color: #555;
+}
+
+.recording-indicator {
+  color: #ff4a4a;
+  font-weight: 500;
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 74, 74, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(255, 74, 74, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 74, 74, 0);
+  }
+}
+
+.transcription-section {
+  margin-top: 20px;
+  padding: 15px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.transcription-text {
+  margin-bottom: 15px;
+  line-height: 1.5;
+  color: #333;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #444;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+/* Remove these classes as they're no longer needed */
+.tts-controls,
+.tts-button,
+.tts-button:disabled,
+.tts-button.playing {
+  display: none;
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.progress-info {
+  margin: 10px 0;
+  padding: 8px;
+  background-color: #e3f2fd;
+  border-radius: 4px;
+  color: #1976d2;
+  font-size: 14px;
+  white-space: pre-line;
+}
+
+.processing-info {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #f5f5f5;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #666;
+}
+
+.processing-info p {
+  margin: 5px 0;
+}
+
+.transcript-container {
+  margin: 20px 0;
+  padding: 15px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.transcript-container h3 {
+  margin-bottom: 10px;
+  color: #333;
+  font-size: 16px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

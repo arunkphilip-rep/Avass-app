@@ -1,0 +1,15 @@
+{
+  "language": "en",
+  "language_probability": 1,
+  "duration": 5.04,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 4.36,
+      "text": "In this my country, all in this and my producing 60s, I love my country."
+    }
+  ],
+  "full_text": "In this my country, all in this and my producing 60s, I love my country.",
+  "processing_time": 1.1332554817199707,
+  "tts_audio": "tts_05d120fe-b0a1-490e-ad51-c1cf3c3b7ab7.wav"
+}

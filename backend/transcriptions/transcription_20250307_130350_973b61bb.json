@@ -1,0 +1,14 @@
+{
+  "language": "en",
+  "language_probability": 1,
+  "duration": 3.0,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 7.0,
+      "text": "Hi, hello, can you hear me? I am talking."
+    }
+  ],
+  "full_text": "Hi, hello, can you hear me? I am talking.",
+  "processing_time": 1.1835532188415527
+}

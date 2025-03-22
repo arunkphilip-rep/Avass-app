@@ -1,0 +1,19 @@
+{
+  "language": "en",
+  "language_probability": 1,
+  "duration": 8.1,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 4.0,
+      "text": "Hi, hello, can you hear me?"
+    },
+    {
+      "start": 4.0,
+      "end": 8.0,
+      "text": "If you guys may currently orienting some of my brothers at sister."
+    }
+  ],
+  "full_text": "Hi, hello, can you hear me? If you guys may currently orienting some of my brothers at sister.",
+  "processing_time": 1.1897609233856201
+}

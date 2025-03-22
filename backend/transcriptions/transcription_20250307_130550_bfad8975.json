@@ -1,0 +1,24 @@
+{
+  "language": "en",
+  "language_probability": 1,
+  "duration": 15.24,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 5.2,
+      "text": "Use proper MIME type detection for browser compatibility,"
+    },
+    {
+      "start": 5.2,
+      "end": 10.0,
+      "text": "improve audio chunk handling, add detailed login for debugging,"
+    },
+    {
+      "start": 10.0,
+      "end": 16.0,
+      "text": "handle audio conversion errors, better use consistent sample rights through."
+    }
+  ],
+  "full_text": "Use proper MIME type detection for browser compatibility, improve audio chunk handling, add detailed login for debugging, handle audio conversion errors, better use consistent sample rights through.",
+  "processing_time": 1.0480148792266846
+}

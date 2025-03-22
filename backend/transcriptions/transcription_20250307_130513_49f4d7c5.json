@@ -1,0 +1,19 @@
+{
+  "language": "en",
+  "language_probability": 1,
+  "duration": 6.06,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 2.4,
+      "text": "Hi, hello, can you hear me?"
+    },
+    {
+      "start": 2.4,
+      "end": 6.0,
+      "text": "In case my country or Indians are my brothers and sisters."
+    }
+  ],
+  "full_text": "Hi, hello, can you hear me? In case my country or Indians are my brothers and sisters.",
+  "processing_time": 0.9306018352508545
+}

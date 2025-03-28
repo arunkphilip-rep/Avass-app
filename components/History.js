@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { colors, shadows } from '../styles/theme';
 import { getNotes } from '../firebase/storage';
 
 export default function History({ onBack }) {
   const [notes, setNotes] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     loadNotes();
@@ -13,10 +14,13 @@ export default function History({ onBack }) {
 
   const loadNotes = async () => {
     try {
+      setLoading(true);
+      setError(null);
       const fetchedNotes = await getNotes();
       setNotes(fetchedNotes);
     } catch (error) {
       console.error('Failed to load notes:', error);
+      setError(error.message);
     } finally {
       setLoading(false);
     }
@@ -33,21 +37,42 @@ export default function History({ onBack }) {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>History</Text>
+        <TouchableOpacity onPress={loadNotes} style={styles.refreshButton}>
+          <Text style={styles.refreshText}>↻</Text>
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.scrollView}>
-        {notes.map((note, index) => (
-          <View key={index} style={styles.noteCard}>
-            <Text style={styles.noteDate}>{formatDate(note.savedAt)}</Text>
-            {note.items.map((item, itemIndex) => (
-              <View key={itemIndex} style={styles.transcriptionItem}>
-                <Text style={styles.transcriptionText}>{item.text}</Text>
-                <Text style={styles.timestamp}>{item.timestamp}</Text>
-              </View>
-            ))}
-          </View>
-        ))}
-      </ScrollView>
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.loadingText}>Loading transcriptions...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centered}>
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity onPress={loadNotes} style={styles.retryButton}>
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : notes.length === 0 ? (
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>No saved transcriptions yet</Text>
+        </View>
+      ) : (
+        <ScrollView style={styles.scrollView}>
+          {notes.map((note) => (
+            <View key={note.id} style={styles.noteCard}>
+              <Text style={styles.noteDate}>{formatDate(note.createdAt)}</Text>
+              {note.items?.map((item, itemIndex) => (
+                <View key={itemIndex} style={styles.transcriptionItem}>
+                  <Text style={styles.transcriptionText}>{item.text}</Text>
+                  <Text style={styles.timestamp}>{item.timestamp}</Text>
+                </View>
+              ))}
+            </View>
+          ))}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -102,4 +127,42 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: colors.primary,
   },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 10,
+    color: colors.secondary,
+  },
+  errorText: {
+    color: colors.error,
+    textAlign: 'center',
+    marginBottom: 15,
+  },
+  retryButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryText: {
+    color: colors.textLight,
+    fontWeight: '600',
+  },
+  emptyText: {
+    color: colors.secondary,
+    fontStyle: 'italic',
+  },
+  refreshButton: {
+    position: 'absolute',
+    right: 0,
+    padding: 10,
+  },
+  refreshText: {
+    color: colors.primary,
+    fontSize: 20,
+    fontWeight: '600',
+  }
 });

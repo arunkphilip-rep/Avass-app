@@ -209,27 +209,40 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   };
 
   const handleSaveTranscriptions = async () => {
-    if (transcriptions.length > 0) {
-      try {
-        // Cache audio files before saving
-        const processedItems = transcriptions.map(item => ({
-          ...item,
-          audioUrl: item.audioUrl ? `cached_${item.id}_${Date.now()}.wav` : null
-        }));
+    if (transcriptions.length === 0) return;
+    
+    setIsProcessing(true);
+    try {
+      const processedItems = transcriptions.map(item => ({
+        id: item.id,
+        text: item.text,
+        timestamp: item.timestamp,
+        audioUrl: item.audioUrl || null
+      }));
 
-        const noteData = {
-          savedAt: new Date().toISOString(),
-          items: processedItems,
-          type: 'transcription-note'
-        };
+      const noteData = {
+        savedAt: new Date().toISOString(),
+        items: processedItems,
+        type: 'transcription-note'
+      };
 
-        await saveTranscriptionNote(noteData);
-        onSave(noteData);
-        Alert.alert('Success', 'Transcriptions saved successfully');
-      } catch (error) {
-        Alert.alert('Save Error', 'Failed to save transcriptions. Please try again.');
-        console.error('Save error:', error);
+      const savedId = await saveTranscriptionNote(noteData);
+      if (savedId) {
+        onSave({ ...noteData, id: savedId });
+        Alert.alert('Success', 'Transcriptions saved successfully', [
+          { text: 'OK', onPress: () => setTranscriptions([]) }
+        ]);
       }
+    } catch (error) {
+      console.error('Save error:', error);
+      Alert.alert(
+        'Error',
+        error.message === 'User not authenticated' 
+          ? 'Please log in to save transcriptions'
+          : 'Failed to save transcriptions. Please try again.'
+      );
+    } finally {
+      setIsProcessing(false);
     }
   };
 

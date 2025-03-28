@@ -1,4 +1,4 @@
-import { getFirestore, collection, setDoc, getDocs } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { auth } from './config';
 
 const db = getFirestore();
@@ -9,9 +9,8 @@ export const saveTranscriptionNote = async (noteData) => {
     if (!userId) throw new Error('User not authenticated');
 
     const timestamp = new Date().toISOString();
-    const noteRef = collection(db, `users/${userId}/notes`);
+    const docRef = doc(db, 'users', userId, 'notes', timestamp);
     
-    // Convert data to plain object suitable for Firestore
     const noteObject = {
       ...noteData,
       items: noteData.items.map(item => ({
@@ -20,10 +19,11 @@ export const saveTranscriptionNote = async (noteData) => {
         timestamp: item.timestamp,
         audioUrl: item.audioUrl || null
       })),
-      createdAt: timestamp
+      createdAt: timestamp,
+      userId
     };
 
-    await setDoc(noteRef.doc(timestamp), noteObject);
+    await setDoc(docRef, noteObject);
     return timestamp;
   } catch (error) {
     console.error('Error saving note:', error);
@@ -36,15 +36,24 @@ export const getNotes = async () => {
     const userId = auth.currentUser?.uid;
     if (!userId) throw new Error('User not authenticated');
 
-    const notesRef = collection(db, `users/${userId}/notes`);
-    const snapshot = await getDocs(notesRef);
+    const notesRef = collection(db, 'users', userId, 'notes');
+    const q = query(notesRef, orderBy('createdAt', 'desc'));
+    const snapshot = await getDocs(q);
     
-    const notes = snapshot.docs.map(doc => ({
+    if (snapshot.empty) {
+      return [];
+    }
+
+    return snapshot.docs.map(doc => ({
       id: doc.id,
-      ...doc.data()
+      ...doc.data(),
+      // Ensure dates are properly formatted
+      createdAt: doc.data().createdAt || doc.data().savedAt,
+      items: doc.data().items?.map(item => ({
+        ...item,
+        timestamp: item.timestamp || new Date(item.id).toLocaleTimeString()
+      })) || []
     }));
-    
-    return notes.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   } catch (error) {
     console.error('Error fetching notes:', error);
     throw error;

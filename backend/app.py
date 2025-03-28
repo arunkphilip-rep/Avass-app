@@ -1,131 +1,278 @@
-import os
-import json
-import uuid
-import logging
-import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, url_for
 from flask_cors import CORS
+import os
+import uuid
+import torch
+import tempfile
+import time
 import datetime
+from threading import Thread
+from queue import Queue
+from faster_whisper import WhisperModel
+from TTS.api import TTS
+import logging
+from pathlib import Path
+from collections import defaultdict
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
+# ✅ Flask Configuration
 app = Flask(__name__)
-
-# Configuration
-UPLOAD_FOLDER = "uploads"
-RESPONSES_FOLDER = "responses"
-COLAB_URL = "https://c022-34-41-106-30.ngrok-free.app"
-
-# Update CORS configuration
 CORS(app)
+app.config['SERVER_NAME'] = '192.168.1.38:5000'  # Add server name configuration
+app.config['PREFERRED_URL_SCHEME'] = 'http'
 
-# Ensure necessary folders exist
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(RESPONSES_FOLDER, exist_ok=True)
+# ✅ Set TTS Output Directory
+TTS_OUTPUT_DIR = "tts_outputs"
+os.makedirs(TTS_OUTPUT_DIR, exist_ok=True)
 
-def verify_colab_connection():
-    """Verify Colab server is accessible"""
+# ✅ Device Configuration
+device = "cuda" if torch.cuda.is_available() else "cpu"
+compute_type = "float16" if device == "cuda" else "float32"
+
+# ✅ Load Faster-Whisper Model
+whisper_model = WhisperModel("medium.en", device=device, compute_type=compute_type)
+
+# ✅ TTS Configuration
+TTS_MODEL = "tts_models/en/ljspeech/glow-tts"  # Use the model that worked
+TTS_TEST_TEXT = "System initialization complete."
+tts = None
+
+def initialize_tts():
+    """Initialize and test TTS system"""
+    global tts
     try:
-        logger.info(f"Verifying Colab connection at: {COLAB_URL}")
-        response = requests.get(COLAB_URL, 
-            timeout=10,
-            headers={'ngrok-skip-browser-warning': 'true'}
-        )
-        logger.info(f"Colab base response: {response.status_code}")
-        return response.status_code == 200
+        logger.info("🎯 Initializing TTS model...")
+        tts = TTS(TTS_MODEL, progress_bar=False)
+        
+        # Test the model
+        test_output = os.path.join(TTS_OUTPUT_DIR, "test_output.wav")
+        tts.tts_to_file(text=TTS_TEST_TEXT, file_path=test_output)
+        
+        if os.path.exists(test_output):
+            os.remove(test_output)
+            logger.info("✅ TTS test successful")
+            return True
+        return False
     except Exception as e:
-        logger.error(f"Colab verification failed: {e}")
+        logger.error(f"❌ TTS initialization failed: {str(e)}")
         return False
 
-def send_to_colab(file_path):
-    """Send audio file to Colab for processing"""
+# ✅ Queue to Process Audio Requests
+processing_queue = Queue()
+
+# ✅ Processing Status Storage
+processing_status = defaultdict(dict)
+
+# ✅ Delete File After a Delay
+def delete_file_after_delay(file_path, delay=60):
+    time.sleep(delay)
     try:
-        if not os.path.exists(file_path):
-            raise FileNotFoundError("Audio file not found")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            logger.info(f"✅ Deleted: {file_path}")
+    except Exception as e:
+        logger.error(f"❌ Error deleting {file_path}: {e}")
 
-        if not verify_colab_connection():
-            logger.error("Colab server not accessible")
-            return {"error": "AI server is currently unavailable"}
-
-        with open(file_path, 'rb') as f:
-            files = {'audio': (os.path.basename(file_path), f, 'audio/m4a')}
-            headers = {
-                'ngrok-skip-browser-warning': 'true',
-                'Accept': 'application/json'
+# ✅ Process Audio from Queue
+def process_audio_queue():
+    while True:
+        audio_path, session_id = processing_queue.get()
+        try:
+            # Update initial status
+            processing_status[session_id] = {
+                'status': 'processing',
+                'message': 'Processing audio file'
             }
             
-            # Increased timeout for Colab processing
-            response = requests.post(
-                f"{COLAB_URL}/predict",
-                files=files,
-                headers=headers,
-                timeout=240  # 4 minutes timeout
-            )
-            
-            logger.info(f"Colab response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {"error": "AI server processing failed"}
+            logger.info(f"🎯 Processing session: {session_id}")
+            try:
+                # ✅ Step 1: Transcription
+                logger.info("Step 1: Starting transcription")
+                segments, _ = whisper_model.transcribe(audio_path)
+                transcription = " ".join([seg.text.strip() for seg in segments])
+                logger.info(f"✅ Transcription complete: {transcription}")
 
-    except requests.Timeout:
-        return {"error": "AI processing is taking too long"}
-    except Exception as e:
-        logger.error(f"Colab error: {str(e)}")
-        return {"error": "Failed to process audio"}
+                try:
+                    logger.info("Step 2: Generating TTS audio")
+                    output_file = f"tts_{session_id}.wav"
+                    output_path = os.path.join(TTS_OUTPUT_DIR, output_file)
+                    
+                    # Ensure TTS is initialized
+                    if tts is None and not initialize_tts():
+                        raise Exception("TTS system is not available")
 
-@app.route('/api/upload', methods=['POST'])
-def upload_audio():
-    try:
-        logger.info("Received upload request")
-        
-        if 'file' not in request.files:
-            return jsonify({'error': 'Audio file is missing'}), 400
+                    # Generate TTS with error checking
+                    tts.tts_to_file(text=transcription, file_path=output_path)
+                    logger.info(f"✅ TTS file generated: {output_path}")
+                    
+                    # Generate URL without app context
+                    tts_audio_url = f"http://192.168.1.38:5000/tts_audio/{output_file}"
 
-        audio_file = request.files['file']
-        if not audio_file.filename:
-            return jsonify({'error': 'No selected file'}), 400
-
-        # Save uploaded file
-        file_ext = os.path.splitext(audio_file.filename)[1].lower()
-        filename = f"{uuid.uuid4()}{file_ext}"
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        
-        audio_file.save(filepath)
-        logger.info(f"File saved: {filepath}")
-
-        try:
-            colab_result = send_to_colab(filepath)
-            
-            if "error" in colab_result:
-                logger.error(f"Colab error: {colab_result['error']}")
-                return jsonify({"error": colab_result["error"]}), 500
-
-            return jsonify({
-                "status": "success",
-                "colab_response": colab_result
-            })
-
+                    # Update success status
+                    processing_status[session_id] = {
+                        'status': 'completed',
+                        'message': 'Processing complete',
+                        'transcription': transcription,
+                        'tts_audio_url': tts_audio_url
+                    }
+                except Exception as tts_error:
+                    logger.error(f"❌ TTS generation failed: {str(tts_error)}")
+                    processing_status[session_id] = {
+                        'status': 'partial_success',
+                        'message': 'Transcription successful but TTS failed',
+                        'transcription': transcription,
+                        'error': str(tts_error)
+                    }
+            except Exception as e:
+                logger.error(f"❌ Processing failed: {str(e)}")
+                processing_status[session_id] = {
+                    'status': 'failed',
+                    'message': 'Processing failed',
+                    'error': str(e)
+                }
         finally:
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            # Cleanup after 5 minutes
+            def cleanup():
+                time.sleep(300)
+                if session_id in processing_status:
+                    del processing_status[session_id]
+            Thread(target=cleanup, daemon=True).start()
+            
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+            processing_queue.task_done()
 
-    except Exception as e:
-        logger.exception("Upload error")
-        return jsonify({"error": str(e)}), 500
+# ✅ Home Route
+@app.route('/', methods=['GET'])
+def home():
+    return "Hello, World! 🚀"
 
+# ✅ Health Check Route
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Simple server status check"""
     return jsonify({
         'status': 'ok',
-        'timestamp': datetime.datetime.utcnow().isoformat(),
-        'upload_folder': os.path.exists(UPLOAD_FOLDER)
+        'timestamp': str(datetime.datetime.utcnow()),
+        'tts_output_dir': os.path.exists(TTS_OUTPUT_DIR)
     })
 
-if __name__ == '__main__':
-    logger.info("Starting Flask server...")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+# ✅ Predict Route (Audio Processing)
+@app.route('/predict', methods=['POST'])
+def predict():
+    logger.info("🎯 Step 1: Received predict request")
+
+    if 'audio' not in request.files:
+        logger.error("❌ Step 1a: No audio file in request")
+        return jsonify({"error": "❌ No audio file received"}), 400
+
+    audio_file = request.files['audio']
+    logger.info(f"✅ Step 2: File received: {audio_file.filename}")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+        audio_path = temp_audio.name
+        audio_file.save(audio_path)
+        logger.info(f"✅ Step 3: File saved temporarily: {audio_path}")
+
+    try:
+        session_id = str(uuid.uuid4())
+        logger.info(f"✅ Step 4: Generated session ID: {session_id}")
+
+        # Add Audio to Queue
+        processing_queue.put((audio_path, session_id))
+        logger.info("✅ Step 5: Added to processing queue")
+
+        # Start Queue Processor Thread If Not Running
+        if not processing_queue.empty():
+            Thread(target=process_audio_queue, daemon=True).start()
+            logger.info("✅ Step 6: Started processing thread")
+
+        return jsonify({
+            "status": "queued",
+            "message": "✅ File received and queued for processing",
+            "session_id": session_id
+        })
+    except Exception as e:
+        logger.error(f"❌ Processing error: {str(e)}")
+        return jsonify({"error": f"❌ Processing failed: {str(e)}"}), 500
+
+# ✅ Upload Audio Route
+@app.route('/api/upload', methods=['POST'])
+def upload_audio():
+    logger.info("🎯 Step 1: Received upload request")
+
+    if 'file' not in request.files:
+        logger.error("❌ Step 1a: No file in request")
+        return jsonify({"error": "❌ No audio file received"}), 400
+
+    audio_file = request.files['file']
+    logger.info(f"✅ Step 2: File received: {audio_file.filename}")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+        audio_path = temp_audio.name
+        audio_file.save(audio_path)
+        logger.info(f"✅ Step 3: File saved temporarily: {audio_path}")
+
+    try:
+        session_id = str(uuid.uuid4())
+        logger.info(f"✅ Step 4: Generated session ID: {session_id}")
+
+        # Add Audio to Queue
+        processing_queue.put((audio_path, session_id))
+        logger.info("✅ Step 5: Added to processing queue")
+
+        # Start Queue Processor Thread
+        if not processing_queue.empty():
+            Thread(target=process_audio_queue, daemon=True).start()
+            logger.info("✅ Step 6: Started processing thread")
+
+        return jsonify({
+            "status": "success",
+            "message": "✅ File received and queued for processing",
+            "session_id": session_id
+        })
+
+    except Exception as e:
+        logger.error(f"❌ Processing error: {str(e)}")
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+            logger.info(f"✅ Temporary file deleted: {audio_path}")
+        return jsonify({"error": f"❌ Processing failed: {str(e)}"}), 500
+
+# ✅ Serve TTS Audio
+@app.route('/tts_audio/<filename>', methods=['GET'])
+def serve_audio(filename):
+    file_path = os.path.join(TTS_OUTPUT_DIR, filename)
+
+    if not os.path.exists(file_path):
+        logger.error(f"❌ File not found or expired: {filename}")
+        return jsonify({"error": "❌ File not found or expired"}), 404
+
+    logger.info(f"✅ Serving file: {filename}")
+    # Schedule Deletion After Serving
+    Thread(target=delete_file_after_delay, args=(file_path, 10)).start()
+
+    return send_file(file_path, as_attachment=True)
+
+# ✅ Status Check Route
+@app.route('/status/<session_id>', methods=['GET'])
+def check_status(session_id):
+    status = processing_status.get(session_id, {
+        'status': 'not_found',
+        'message': 'Session not found'
+    })
+    return jsonify(status)
+
+# ✅ Run Flask Application
+if __name__ == "__main__":
+    logger.info("🚀 Starting Flask application")
+    if not initialize_tts():
+        logger.error("❌ Failed to initialize TTS system")
+        exit(1)
+    app.run(host="0.0.0.0", port=5000, debug=True)

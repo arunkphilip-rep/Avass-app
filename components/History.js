@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Share } from 'react-native';
+import { AntDesign } from '@expo/vector-icons'; // Add this import
 import { colors, shadows } from '../styles/theme';
-import { getNotes } from '../firebase/storage';
+import { getNotes, deleteNote } from '../firebase/storage';
 
 export default function History({ onBack }) {
   const [notes, setNotes] = useState([]);
@@ -29,6 +30,66 @@ export default function History({ onBack }) {
   const formatDate = (dateString) => {
     return new Date(dateString).toLocaleString();
   };
+
+  const handleDelete = async (noteId) => {
+    Alert.alert(
+      'Delete Note',
+      'Are you sure you want to delete this note?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              await deleteNote(noteId);
+              await loadNotes(); // Reload notes after deletion
+              Alert.alert('Success', 'Note deleted successfully');
+            } catch (error) {
+              console.error('Delete error:', error);
+              Alert.alert('Error', 'Failed to delete note');
+            } finally {
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleShare = async (note) => {
+    try {
+      const shareText = note.items
+        .map(item => `${item.text} (${item.timestamp})`)
+        .join('\n\n');
+      
+      await Share.share({
+        message: shareText,
+        title: 'Shared Transcription'
+      });
+    } catch (error) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Failed to share note');
+    }
+  };
+
+  const renderNoteActions = (note) => (
+    <View style={styles.noteActions}>
+      <TouchableOpacity 
+        onPress={() => handleShare(note)}
+        style={[styles.actionButton, styles.iconButton]}
+      >
+        <AntDesign name="sharealt" size={20} color={colors.textLight} />
+      </TouchableOpacity>
+      <TouchableOpacity 
+        onPress={() => handleDelete(note.id)}
+        style={[styles.actionButton, styles.iconButton, styles.deleteButton]}
+      >
+        <AntDesign name="delete" size={20} color={colors.textLight} />
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
@@ -69,6 +130,7 @@ export default function History({ onBack }) {
                   <Text style={styles.timestamp}>{item.timestamp}</Text>
                 </View>
               ))}
+              {renderNoteActions(note)}
             </View>
           ))}
         </ScrollView>
@@ -164,5 +226,28 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontSize: 20,
     fontWeight: '600',
+  },
+  noteActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingTop: 10,
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    gap: 15,
+  },
+  actionButton: {
+    padding: 8,
+    borderRadius: 20,
+  },
+  iconButton: {
+    backgroundColor: colors.primary,
+    width: 36,
+    height: 36,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteButton: {
+    backgroundColor: colors.error,
   }
 });

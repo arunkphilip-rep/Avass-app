@@ -1,4 +1,4 @@
-import { getFirestore, doc, setDoc, collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, collection, getDocs, query, orderBy, deleteDoc } from 'firebase/firestore';
 import { auth } from './config';
 
 const db = getFirestore();
@@ -56,6 +56,20 @@ export const getNotes = async () => {
     }));
   } catch (error) {
     console.error('Error fetching notes:', error);
+    throw error;
+  }
+};
+
+export const deleteNote = async (noteId) => {
+  try {
+    const userId = auth.currentUser?.uid;
+    if (!userId) throw new Error('User not authenticated');
+
+    const noteRef = doc(db, 'users', userId, 'notes', noteId);
+    await deleteDoc(noteRef);
+    return true;
+  } catch (error) {
+    console.error('Error deleting note:', error);
     throw error;
   }
 };

@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 # ✅ Flask Configuration
 app = Flask(__name__)
 CORS(app)
-app.config['SERVER_NAME'] = '192.168.1.38:5000'  # Add server name configuration
-app.config['PREFERRED_URL_SCHEME'] = 'http'
+
+# Add server host/port config
+SERVER_HOST = '192.168.1.3'
+SERVER_PORT = 5000
 
 # ✅ Set TTS Output Directory
 TTS_OUTPUT_DIR = "tts_outputs"
@@ -113,7 +115,7 @@ def process_audio_queue():
                     logger.info(f"✅ TTS file generated: {output_path}")
                     
                     # Generate URL without app context
-                    tts_audio_url = f"http://192.168.1.38:5000/tts_audio/{output_file}"
+                    tts_audio_url = f"http://{SERVER_HOST}:{SERVER_PORT}/tts_audio/{output_file}"
 
                     # Update success status
                     processing_status[session_id] = {
@@ -275,4 +277,4 @@ if __name__ == "__main__":
     if not initialize_tts():
         logger.error("❌ Failed to initialize TTS system")
         exit(1)
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=True)

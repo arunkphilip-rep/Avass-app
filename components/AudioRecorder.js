@@ -117,8 +117,9 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
         setUploadProgress(progress);
       });
       
-      if (!response || !response.colab_response) {
-        throw new Error('Invalid server response');
+      // Remove the colab_response check since server sends response directly
+      if (!response) {
+        throw new Error('Empty response from server');
       }
       
       handleNewRecording(response);
@@ -126,7 +127,7 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     } catch (error) {
       console.error('Processing error:', error);
       setMessage(`Error: ${error.message}`);
-      Alert.alert('Processing Error', 'Failed to process audio. Please try again.');
+      Alert.alert('Processing Error', error.message);
     } finally {
       setProcessingQueue(queue => queue.slice(1));
       setIsProcessingEnabled(true);
@@ -140,19 +141,24 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   };
 
   const handleNewRecording = (result) => {
-    const colabData = result.colab_response;
-    console.log('Processing Colab response:', colabData);
+    // Server now sends transcription and tts_audio_url directly
+    const transcriptionData = result.transcription;
+    console.log('Processing response:', result);
 
-    if (colabData?.transcription && colabData?.tts_audio_url) {
-      // Add transcription to the transcriptions list
-      setTranscriptions(prev => [...prev, {
+    if (transcriptionData) {
+      const newTranscription = {
         id: Date.now(),
-        text: colabData.transcription,
-        timestamp: new Date().toLocaleTimeString()
-      }]);
+        text: transcriptionData,
+        timestamp: new Date().toLocaleTimeString(),
+        audioUrl: result.tts_audio_url
+      };
+      
+      setTranscriptions(prev => [...prev, newTranscription]);
+      console.log('Added new transcription:', newTranscription);
 
-      // Automatically play audio in background
-      playTTSAudio(colabData.tts_audio_url);
+      if (newTranscription.audioUrl) {
+        playTTSAudio(newTranscription.audioUrl);
+      }
     }
   };
 
@@ -220,26 +226,36 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
           ) : (
             transcriptions.map(item => (
               <View key={item.id} style={styles.transcriptionItem}>
-                <Text style={styles.transcriptionText}>{item.text}</Text>
+                <View style={styles.transcriptionContent}>
+                  <Text style={styles.transcriptionText}>{item.text}</Text>
+                  <TouchableOpacity 
+                    style={styles.playButton}
+                    onPress={() => item.audioUrl && playTTSAudio(item.audioUrl)}
+                  >
+                    <Text style={styles.playButtonText}>▶️</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.timestamp}>{item.timestamp}</Text>
               </View>
             ))
           )}
         </ScrollView>
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity 
-            style={[styles.actionButton, styles.saveButton]}
-            onPress={handleSaveTranscriptions}
-          >
-            <Text style={styles.buttonText}>Save</Text>
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.actionButton, styles.clearButton]}
-            onPress={() => setTranscriptions([])}
-          >
-            <Text style={styles.buttonText}>Clear</Text>
-          </TouchableOpacity>
-        </View>
+        {transcriptions.length > 0 && (
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.saveButton]}
+              onPress={handleSaveTranscriptions}
+            >
+              <Text style={styles.buttonText}>Save</Text>
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={[styles.actionButton, styles.clearButton]}
+              onPress={() => setTranscriptions([])}
+            >
+              <Text style={styles.buttonText}>Clear</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       <View style={styles.controlsContainer}>
@@ -300,10 +316,23 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     ...shadows.main,
   },
+  transcriptionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
   transcriptionText: {
+    flex: 1,
     fontSize: 16,
     color: colors.text,
-    marginBottom: 5,
+    marginRight: 10,
+  },
+  playButton: {
+    padding: 5,
+  },
+  playButtonText: {
+    fontSize: 20,
   },
   timestamp: {
     fontSize: 12,

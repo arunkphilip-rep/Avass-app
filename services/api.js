@@ -66,15 +66,19 @@ const checkProcessingStatus = async (sessionId) => {
   }
 };
 
-const playGeneratedAudio = async (audioUrl) => {
-  try {
-    console.log('🎵 Playing audio from:', audioUrl);
-    const { sound } = await Audio.Sound.createAsync({ uri: audioUrl });
-    await sound.playAsync();
-    return sound;
-  } catch (error) {
-    console.error('❌ Audio playback failed:', error);
-    throw error;
+const playGeneratedAudio = async (audioUrl, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const { sound } = await Audio.Sound.createAsync(
+        { uri: audioUrl },
+        { shouldPlay: false }
+      );
+      return sound;
+    } catch (error) {
+      console.warn(`Attempt ${i + 1} failed:`, error);
+      if (i === retries - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
   }
 };
 
@@ -183,13 +187,10 @@ export const uploadAudio = async (fileUri, onProgress) => {
 
       if (processingResult?.transcription) {
         console.log('🎯 Transcription received:', processingResult.transcription);
-        const result = {
+        return {
           ...processingResult,
-          sound: processingResult.tts_audio_url ? 
-            await playGeneratedAudio(processingResult.tts_audio_url) : 
-            null
+          sound: null // Let component handle audio playback
         };
-        return result;
       }
       
       return processingResult || data;

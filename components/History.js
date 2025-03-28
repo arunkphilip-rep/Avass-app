@@ -1,8 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, shadows } from '../styles/theme';
+import { getNotes } from '../firebase/storage';
 
-export default function History({ savedTranscriptions = [], onBack }) {
+export default function History({ onBack }) {
+  const [notes, setNotes] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadNotes();
+  }, []);
+
+  const loadNotes = async () => {
+    try {
+      const fetchedNotes = await getNotes();
+      setNotes(fetchedNotes);
+    } catch (error) {
+      console.error('Failed to load notes:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleString();
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -11,12 +34,13 @@ export default function History({ savedTranscriptions = [], onBack }) {
         </TouchableOpacity>
         <Text style={styles.title}>History</Text>
       </View>
+
       <ScrollView style={styles.scrollView}>
-        {savedTranscriptions.map((group, index) => (
-          <View key={index} style={styles.transcriptionGroup}>
-            <Text style={styles.groupDate}>{group.savedAt}</Text>
-            {group.items.map(item => (
-              <View key={item.id} style={styles.transcriptionItem}>
+        {notes.map((note, index) => (
+          <View key={index} style={styles.noteCard}>
+            <Text style={styles.noteDate}>{formatDate(note.savedAt)}</Text>
+            {note.items.map((item, itemIndex) => (
+              <View key={itemIndex} style={styles.transcriptionItem}>
                 <Text style={styles.transcriptionText}>{item.text}</Text>
                 <Text style={styles.timestamp}>{item.timestamp}</Text>
               </View>
@@ -56,5 +80,26 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.text,
     textAlign: 'center',
+  },
+  noteCard: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 15,
+    padding: 15,
+    marginBottom: 20,
+    ...shadows.main,
+  },
+  noteDate: {
+    fontSize: 14,
+    color: colors.secondary,
+    marginBottom: 10,
+    fontWeight: '500',
+  },
+  transcriptionItem: {
+    backgroundColor: colors.background,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
   },
 });

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, ScrollView, Alert } from 'react-native';
 import { Audio } from 'expo-av';
 import { uploadAudio } from '../services/api';
+import { saveTranscriptionNote } from '../firebase/storage';
 import { colors, shadows } from '../styles/theme';
 
 const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
@@ -20,6 +21,7 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
   const [transcriptions, setTranscriptions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [currentSound, setCurrentSound] = useState(null);
 
   useEffect(() => {
     return () => {
@@ -28,6 +30,9 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
       }
       if (sound) {
         sound.unloadAsync().catch(console.error);
+      }
+      if (currentSound) {
+        currentSound.unloadAsync();
       }
     };
   }, []);
@@ -164,35 +169,67 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
 
   const playTTSAudio = async (audioUrl) => {
     try {
-      if (sound) {
-        await sound.unloadAsync();
+      if (currentSound) {
+        await currentSound.stopAsync();
+        await currentSound.unloadAsync();
+        setCurrentSound(null);
+      }
+
+      // Add error handling for audio URL
+      if (!audioUrl) {
+        throw new Error('No audio URL provided');
       }
 
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
-        { shouldPlay: true, progressUpdateIntervalMillis: 100 }
+        { shouldPlay: true },
+        (status) => {
+          if (status.error) {
+            console.error('Audio playback error:', status.error);
+            Alert.alert('Playback Error', 'Unable to play audio');
+          }
+        }
       );
 
-      setSound(newSound);
+      setCurrentSound(newSound);
       
       newSound.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
-          newSound.unloadAsync();
+          newSound.unloadAsync().then(() => {
+            setCurrentSound(null);
+          }).catch(console.error);
         }
       });
+
+      await newSound.playAsync();
     } catch (error) {
       console.error('Audio playback error:', error);
+      Alert.alert('Playback Error', 'Failed to play audio');
     }
   };
 
-  const handleSaveTranscriptions = () => {
+  const handleSaveTranscriptions = async () => {
     if (transcriptions.length > 0) {
-      const group = {
-        savedAt: new Date().toLocaleString(),
-        items: [...transcriptions]
-      };
-      onSave(group);
-      setTranscriptions([]); // Clear current transcriptions
+      try {
+        // Cache audio files before saving
+        const processedItems = transcriptions.map(item => ({
+          ...item,
+          audioUrl: item.audioUrl ? `cached_${item.id}_${Date.now()}.wav` : null
+        }));
+
+        const noteData = {
+          savedAt: new Date().toISOString(),
+          items: processedItems,
+          type: 'transcription-note'
+        };
+
+        await saveTranscriptionNote(noteData);
+        onSave(noteData);
+        Alert.alert('Success', 'Transcriptions saved successfully');
+      } catch (error) {
+        Alert.alert('Save Error', 'Failed to save transcriptions. Please try again.');
+        console.error('Save error:', error);
+      }
     }
   };
 
@@ -315,6 +352,8 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginBottom: 10,
     ...shadows.main,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary,
   },
   transcriptionContent: {
     flexDirection: 'row',

@@ -22,6 +22,7 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   const [transcriptions, setTranscriptions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
+  const [playedAudios, setPlayedAudios] = useState(new Set());
 
   useEffect(() => {
     return () => {
@@ -159,29 +160,7 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     setProcessingQueue(queue => [...queue, { uri, timestamp: Date.now() }]);
   };
 
-  const handleNewRecording = (result) => {
-    // Server now sends transcription and tts_audio_url directly
-    const transcriptionData = result.transcription;
-    console.log('Processing response:', result);
-
-    if (transcriptionData) {
-      const newTranscription = {
-        id: Date.now(),
-        text: transcriptionData,
-        timestamp: new Date().toLocaleTimeString(),
-        audioUrl: result.tts_audio_url
-      };
-      
-      setTranscriptions(prev => [...prev, newTranscription]);
-      console.log('Added new transcription:', newTranscription);
-
-      if (newTranscription.audioUrl) {
-        playTTSAudio(newTranscription.audioUrl);
-      }
-    }
-  };
-
-  const playTTSAudio = async (audioUrl) => {
+  const playTTSAudio = async (audioUrl, transcriptionId) => {
     try {
       if (currentSound) {
         await currentSound.stopAsync();
@@ -189,36 +168,54 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
         setCurrentSound(null);
       }
 
-      // Add error handling for audio URL
       if (!audioUrl) {
-        throw new Error('No audio URL provided');
+        throw new Error('No TTS audio URL provided');
       }
 
+      console.log('Playing TTS audio:', audioUrl);
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
-        { shouldPlay: true },
-        (status) => {
-          if (status.error) {
-            console.error('Audio playback error:', status.error);
-            Alert.alert('Playback Error', 'Unable to play audio');
-          }
-        }
+        { shouldPlay: true }
       );
 
       setCurrentSound(newSound);
-      
+      await newSound.playAsync();
+
       newSound.setOnPlaybackStatusUpdate((status) => {
         if (status.didJustFinish) {
-          newSound.unloadAsync().then(() => {
-            setCurrentSound(null);
-          }).catch(console.error);
+          newSound.unloadAsync();
+          setCurrentSound(null);
+          // Mark this audio as played
+          setPlayedAudios(prev => new Set([...prev, transcriptionId]));
         }
       });
 
-      await newSound.playAsync();
     } catch (error) {
-      console.error('Audio playback error:', error);
-      Alert.alert('Playback Error', 'Failed to play audio');
+      console.error('TTS playback error:', error);
+      Alert.alert('Audio Error', 'Failed to play TTS audio');
+    }
+  };
+
+  const handleNewRecording = (result) => {
+    const transcriptionData = result.transcription;
+    const ttsAudioUrl = result.tts_audio_url;
+    console.log('Processing response:', result);
+
+    if (transcriptionData) {
+      const newTranscription = {
+        id: Date.now(),
+        text: transcriptionData,
+        timestamp: new Date().toLocaleTimeString(),
+        audioUrl: ttsAudioUrl
+      };
+      
+      setTranscriptions(prev => [...prev, newTranscription]);
+      console.log('Added new transcription:', newTranscription);
+
+      // Auto-play TTS audio if available
+      if (ttsAudioUrl) {
+        playTTSAudio(ttsAudioUrl, newTranscription.id);
+      }
     }
   };
 
@@ -271,6 +268,23 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     );
   };
 
+  const renderTranscriptionItem = (item) => (
+    <View key={item.id} style={styles.transcriptionItem}>
+      <View style={styles.transcriptionContent}>
+        <Text style={styles.transcriptionText}>{item.text}</Text>
+        {item.audioUrl && !playedAudios.has(item.id) && (
+          <TouchableOpacity 
+            onPress={() => playTTSAudio(item.audioUrl, item.id)}
+            style={styles.audioButton}
+          >
+            <Text style={styles.audioButtonText}>🔊</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+      <Text style={styles.timestamp}>{item.timestamp}</Text>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -288,20 +302,7 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
           {transcriptions.length === 0 ? (
             <Text style={styles.emptyText}>No transcriptions yet</Text>
           ) : (
-            transcriptions.map(item => (
-              <View key={item.id} style={styles.transcriptionItem}>
-                <View style={styles.transcriptionContent}>
-                  <Text style={styles.transcriptionText}>{item.text}</Text>
-                  <TouchableOpacity 
-                    style={styles.playButton}
-                    onPress={() => item.audioUrl && playTTSAudio(item.audioUrl)}
-                  >
-                    <Text style={styles.playButtonText}>▶️</Text>
-                  </TouchableOpacity>
-                </View>
-                <Text style={styles.timestamp}>{item.timestamp}</Text>
-              </View>
-            ))
+            transcriptions.map(renderTranscriptionItem)
           )}
         </ScrollView>
         {transcriptions.length > 0 && (
@@ -394,22 +395,13 @@ const styles = StyleSheet.create({
     borderLeftColor: colors.primary,
   },
   transcriptionContent: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   transcriptionText: {
-    flex: 1,
     fontSize: 16,
     color: colors.text,
-    marginRight: 10,
-  },
-  playButton: {
-    padding: 5,
-  },
-  playButtonText: {
-    fontSize: 20,
   },
   timestamp: {
     fontSize: 12,
@@ -495,6 +487,20 @@ const styles = StyleSheet.create({
     marginTop: 10,
     color: colors.text,
     fontSize: 16,
+  },
+  audioButton: {
+    padding: 8,
+    marginLeft: 10,
+    backgroundColor: colors.primary,
+    borderRadius: 20,
+    width: 40,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioButtonText: {
+    fontSize: 20,
+    color: colors.textLight,
   },
 });
 

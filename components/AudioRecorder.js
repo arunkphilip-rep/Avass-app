@@ -109,6 +109,20 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     }
   }
 
+  const cancelRecording = async () => {
+    try {
+      if (recording) {
+        await recording.stopAndUnloadAsync();
+        setRecording(null);
+      }
+      setIsRecording(false);
+      setMessage("Recording cancelled");
+    } catch (error) {
+      console.error('Cancel recording error:', error);
+      setMessage("Failed to cancel recording");
+    }
+  };
+
   const processNextInQueue = async () => {
     if (processingQueue.length === 0) return;
     
@@ -310,15 +324,26 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
 
       <View style={styles.controlsContainer}>
         <Text style={styles.message}>{message}</Text>
-        <TouchableOpacity 
-          style={[styles.recordButton, isRecording && styles.recordingActive]}
-          onPress={() => isRecording ? stopRecording() : startRecording()}
-          disabled={isUploading || isProcessing}
-        >
-          <Text style={styles.buttonText}>
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.buttonRow}>
+          <TouchableOpacity 
+            style={[styles.recordButton, isRecording && styles.recordingActive]}
+            onPress={() => isRecording ? stopRecording() : startRecording()}
+            disabled={isUploading || isProcessing}
+          >
+            <Text style={styles.buttonText}>
+              {isRecording ? 'Stop Recording' : 'Start Recording'}
+            </Text>
+          </TouchableOpacity>
+          
+          {isRecording && (
+            <TouchableOpacity 
+              style={styles.cancelButton}
+              onPress={cancelRecording}
+            >
+              <Text style={styles.buttonText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -422,8 +447,21 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     ...shadows.main,
   },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    justifyContent: 'center',
+  },
   recordButton: {
+    flex: 2,
     backgroundColor: colors.primary,
+    padding: 15,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: colors.error,
     padding: 15,
     borderRadius: 10,
     alignItems: 'center',

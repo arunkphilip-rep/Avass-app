@@ -1,21 +1,21 @@
 export const colors = {
-  primary: '#4A3428',    // Darker coffee brown for better contrast
-  secondary: '#8B6B4E',  // Warmer medium brown
-  accent: '#D4A777',     // Warm light brown
-  background: '#FFF8F0', // Warm cream background
-  text: '#2C1810',       // Very dark brown for text
-  textLight: '#FFFFFF',  // White text for dark backgrounds
-  inputBg: '#FFFFFF',    // Pure white for inputs
-  error: '#CF6679',      // Softer error red
-  border: '#D4BAA5',     // Subtle border color
+  primary: '#1F1F1F',    // Deep charcoal for a sleek and modern feel
+  secondary: '#444D56',  // Sophisticated muted gray-blue
+  accent: '#FFD700',     // Luxurious gold for highlights and accents
+  background: '#F4F4F4', // Soft light gray for a neutral and premium look
+  text: '#121212',       // Almost black for high readability
+  textLight: '#FFFFFF',  // White for dark backgrounds
+  inputBg: '#FFFFFF',    // Crisp white for input fields
+  error: '#E63946',      // Professional but noticeable error red
+  border: '#CFCFCF',     // Elegant light gray for subtle borders
 };
 
 export const shadows = {
   main: {
-    shadowColor: '#2C1810',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 6,
   }
 };

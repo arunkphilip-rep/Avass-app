@@ -39,10 +39,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float16" if device == "cuda" else "float32"
 
 # ✅ Load Faster-Whisper Model
-whisper_model = WhisperModel("medium.en", device=device, compute_type=compute_type)
+whisper_model = WhisperModel("tiny.en", device=device, compute_type=compute_type)
 
 # ✅ TTS Configuration
-TTS_MODEL = "tts_models/en/ljspeech/glow-tts"  # Use the model that worked
+TTS_MODEL = "tts_models/en/ljspeech/vits"  # Use the model that worked
 TTS_TEST_TEXT = "System initialization complete."
 tts = None
 
@@ -82,73 +82,98 @@ def delete_file_after_delay(file_path, delay=60):
     except Exception as e:
         logger.error(f"❌ Error deleting {file_path}: {e}")
 
+# ✅ Add buffer queue
+audio_buffer = Queue()
+processing_threads = []
+MAX_PROCESSING_THREADS = 3
+
+def process_audio_buffer():
+    while True:
+        audio_path, session_id = audio_buffer.get()
+        try:
+            process_single_audio(audio_path, session_id)
+        finally:
+            audio_buffer.task_done()
+
+def start_processing_threads():
+    for _ in range(MAX_PROCESSING_THREADS):
+        thread = Thread(target=process_audio_buffer, daemon=True)
+        thread.start()
+        processing_threads.append(thread)
+
+def process_single_audio(audio_path, session_id):
+    try:
+        # Update status to processing
+        processing_status[session_id].update({
+            'status': 'processing',
+            'message': 'Processing audio file',
+            'start_time': datetime.datetime.utcnow().isoformat()
+        })
+        
+        logger.info(f"🎯 Processing session: {session_id}")
+        try:
+            # Step 1: Transcription
+            logger.info("Step 1: Starting transcription")
+            segments, _ = whisper_model.transcribe(audio_path)
+            transcription = " ".join([seg.text.strip() for seg in segments])
+            
+            # Update transcription status
+            processing_status[session_id].update({
+                'transcription_complete': True,
+                'transcription': transcription
+            })
+            
+            logger.info(f"✅ Transcription complete: {transcription}")
+
+            try:
+                logger.info("Step 2: Generating TTS audio")
+                output_file = f"tts_{session_id}.wav"
+                output_path = os.path.join(TTS_OUTPUT_DIR, output_file)
+                
+                if tts is None and not initialize_tts():
+                    raise Exception("TTS system is not available")
+
+                tts.tts_to_file(text=transcription, file_path=output_path)
+                logger.info(f"✅ TTS file generated: {output_path}")
+                
+                tts_audio_url = f"http://{SERVER_HOST}:{SERVER_PORT}/tts_audio/{output_file}"
+
+                # Update complete status
+                processing_status[session_id].update({
+                    'status': 'completed',
+                    'message': 'Processing complete',
+                    'transcription': transcription,
+                    'tts_audio_url': tts_audio_url,
+                    'completed_at': datetime.datetime.utcnow().isoformat()
+                })
+                
+            except Exception as tts_error:
+                logger.error(f"❌ TTS generation failed: {str(tts_error)}")
+                processing_status[session_id].update({
+                    'status': 'partial_success',
+                    'message': 'Transcription successful but TTS failed',
+                    'error': str(tts_error)
+                })
+                
+        except Exception as e:
+            logger.error(f"❌ Processing failed: {str(e)}")
+            processing_status[session_id].update({
+                'status': 'failed',
+                'message': 'Processing failed',
+                'error': str(e)
+            })
+            
+    finally:
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+
 # ✅ Process Audio from Queue
 def process_audio_queue():
     while True:
         audio_path, session_id = processing_queue.get()
         try:
-            # Update initial status
-            processing_status[session_id] = {
-                'status': 'processing',
-                'message': 'Processing audio file'
-            }
-            
-            logger.info(f"🎯 Processing session: {session_id}")
-            try:
-                # ✅ Step 1: Transcription
-                logger.info("Step 1: Starting transcription")
-                segments, _ = whisper_model.transcribe(audio_path)
-                transcription = " ".join([seg.text.strip() for seg in segments])
-                logger.info(f"✅ Transcription complete: {transcription}")
-
-                try:
-                    logger.info("Step 2: Generating TTS audio")
-                    output_file = f"tts_{session_id}.wav"
-                    output_path = os.path.join(TTS_OUTPUT_DIR, output_file)
-                    
-                    # Ensure TTS is initialized
-                    if tts is None and not initialize_tts():
-                        raise Exception("TTS system is not available")
-
-                    # Generate TTS with error checking
-                    tts.tts_to_file(text=transcription, file_path=output_path)
-                    logger.info(f"✅ TTS file generated: {output_path}")
-                    
-                    # Generate URL without app context
-                    tts_audio_url = f"http://{SERVER_HOST}:{SERVER_PORT}/tts_audio/{output_file}"
-
-                    # Update success status
-                    processing_status[session_id] = {
-                        'status': 'completed',
-                        'message': 'Processing complete',
-                        'transcription': transcription,
-                        'tts_audio_url': tts_audio_url
-                    }
-                except Exception as tts_error:
-                    logger.error(f"❌ TTS generation failed: {str(tts_error)}")
-                    processing_status[session_id] = {
-                        'status': 'partial_success',
-                        'message': 'Transcription successful but TTS failed',
-                        'transcription': transcription,
-                        'error': str(tts_error)
-                    }
-            except Exception as e:
-                logger.error(f"❌ Processing failed: {str(e)}")
-                processing_status[session_id] = {
-                    'status': 'failed',
-                    'message': 'Processing failed',
-                    'error': str(e)
-                }
+            process_single_audio(audio_path, session_id)
         finally:
-            # Cleanup after 5 minutes
-            def cleanup():
-                time.sleep(300)
-                if session_id in processing_status:
-                    del processing_status[session_id]
-            Thread(target=cleanup, daemon=True).start()
-            
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
             processing_queue.task_done()
 
 # ✅ Home Route
@@ -247,6 +272,41 @@ def upload_audio():
             logger.info(f"✅ Temporary file deleted: {audio_path}")
         return jsonify({"error": f"❌ Processing failed: {str(e)}"}), 500
 
+# ✅ Buffer Upload Route
+@app.route('/api/buffer/upload', methods=['POST'])
+def buffer_upload():
+    logger.info("🎯 Step 1: Received buffer upload request")
+
+    if 'file' not in request.files:
+        return jsonify({"error": "No audio file received"}), 400
+
+    audio_file = request.files['file']
+    
+    try:
+        session_id = str(uuid.uuid4())
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+            audio_path = temp_audio.name
+            audio_file.save(audio_path)
+            
+            # Initialize status before adding to queue
+            processing_status[session_id] = {
+                'status': 'queued',
+                'message': 'Audio queued for processing',
+                'queue_position': audio_buffer.qsize() + 1,
+                'total_queue': audio_buffer.qsize() + 1,
+                'created_at': datetime.datetime.utcnow().isoformat(),
+                'session_id': session_id
+            }
+            
+            audio_buffer.put((audio_path, session_id))
+            
+            return jsonify(processing_status[session_id])
+
+    except Exception as e:
+        logger.error(f"❌ Buffer upload error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
 # ✅ Serve TTS Audio
 @app.route('/tts_audio/<filename>', methods=['GET'])
 def serve_audio(filename):
@@ -269,6 +329,16 @@ def check_status(session_id):
         'status': 'not_found',
         'message': 'Session not found'
     })
+    
+    # Add queue information if status is queued
+    if status.get('status') == 'queued':
+        queue_position = list(processing_status.keys()).index(session_id)
+        status.update({
+            'queue_position': queue_position,
+            'total_queue': len(processing_status),
+            'estimated_wait': queue_position * 2  # Rough estimate in seconds
+        })
+    
     return jsonify(status)
 
 # ✅ Run Flask Application
@@ -277,4 +347,5 @@ if __name__ == "__main__":
     if not initialize_tts():
         logger.error("❌ Failed to initialize TTS system")
         exit(1)
+    start_processing_threads()
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=True)

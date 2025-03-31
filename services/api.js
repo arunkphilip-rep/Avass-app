@@ -82,7 +82,31 @@ const playGeneratedAudio = async (audioUrl, retries = 3) => {
   }
 };
 
-export const uploadAudio = async (fileUri, onProgress) => {
+// Add request queue management
+const requestQueue = [];
+let isProcessing = false;
+
+const processQueue = async () => {
+  if (isProcessing || requestQueue.length === 0) return;
+  
+  isProcessing = true;
+  const { fileUri, onProgress, resolve, reject } = requestQueue[0];
+
+  try {
+    const result = await performUpload(fileUri, onProgress);
+    resolve(result);
+  } catch (error) {
+    reject(error);
+  } finally {
+    requestQueue.shift();
+    isProcessing = false;
+    if (requestQueue.length > 0) {
+      processQueue();
+    }
+  }
+};
+
+const performUpload = async (fileUri, onProgress) => {
   try {
     const apiUrl = await initializeApi();
     if (!apiUrl) {
@@ -125,7 +149,7 @@ export const uploadAudio = async (fileUri, onProgress) => {
     }
 
     console.log('📤 Step 5: Uploading audio file');
-    const response = await fetch(`${API_URL}/api/upload`, {  // Changed from /upload to /api/upload
+    const response = await fetch(`${API_URL}/api/buffer/upload`, {  // Changed endpoint
       method: 'POST',
       body: formData,
       headers: {
@@ -148,6 +172,50 @@ export const uploadAudio = async (fileUri, onProgress) => {
 
     if (!response.ok) {
       throw new Error(data.message || `Server error: ${response.status}`);
+    }
+
+    // Handle queued status
+    if (data.status === 'queued') {
+      console.log('✅ Audio queued, session ID:', data.session_id);
+      const sessionId = data.session_id;
+      
+      // Check processing status with timeout
+      const maxAttempts = 60; // Increased timeout
+      let attempts = 0;
+
+      while (attempts < maxAttempts) {
+        try {
+          const status = await checkProcessingStatus(sessionId);
+          console.log('📊 Processing status:', status);
+          
+          if (status.status === 'completed') {
+            return {
+              transcription: status.transcription,
+              tts_audio_url: status.tts_audio_url,
+              status: 'completed'
+            };
+          } else if (status.status === 'failed') {
+            throw new Error(status.error || 'Processing failed');
+          } else if (status.status === 'processing' || status.status === 'queued') {
+            if (onProgress) {
+              const progressValue = status.queue_position ? 
+                Math.round((1 - status.queue_position / status.total_queue) * 50) :
+                Math.round(50 + (attempts / maxAttempts) * 50);
+              onProgress(progressValue);
+            }
+          } else if (status.status === 'not_found') {
+            throw new Error('Session not found');
+          }
+          
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+          attempts++;
+        } catch (error) {
+          console.error('Status check error:', error);
+          if (attempts >= maxAttempts - 1) throw error;
+        }
+      }
+
+      throw new Error('Processing timed out');
     }
 
     if (!data) {
@@ -210,4 +278,13 @@ export const uploadAudio = async (fileUri, onProgress) => {
     }
     throw new Error(`Upload failed: ${error.message}`);
   }
+};
+
+export const uploadAudio = async (fileUri, onProgress) => {
+  return new Promise((resolve, reject) => {
+    requestQueue.push({ fileUri, onProgress, resolve, reject });
+    if (!isProcessing) {
+      processQueue();
+    }
+  });
 };

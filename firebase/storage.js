@@ -70,6 +70,6 @@ export const deleteNote = async (noteId) => {
     return true;
   } catch (error) {
     console.error('Error deleting note:', error);
-    throw error;
+    throw new Error('Failed to delete transcription');
   }
 };

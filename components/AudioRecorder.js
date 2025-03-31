@@ -3,7 +3,9 @@ import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, ScrollView
 import { Audio } from 'expo-av';
 import { uploadAudio } from '../services/api';
 import { saveTranscriptionNote } from '../firebase/storage';
+import { bufferManager } from '../services/bufferManager';
 import { colors, shadows } from '../styles/theme';
+import LoadingAnimation from './LoadingAnimation';
 
 const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   const [recording, setRecording] = useState(null);
@@ -23,6 +25,9 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   const [isRecording, setIsRecording] = useState(false);
   const [currentSound, setCurrentSound] = useState(null);
   const [playedAudios, setPlayedAudios] = useState(new Set());
+  const [pendingRecordings, setPendingRecordings] = useState([]);
+  const [processingIndex, setProcessingIndex] = useState(-1);
+  const [bufferStatus, setBufferStatus] = useState({ pending: 0, processing: false });
 
   useEffect(() => {
     return () => {
@@ -38,12 +43,16 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     };
   }, []);
 
-  // Background processing queue
   useEffect(() => {
-    if (processingQueue.length > 0 && isProcessingEnabled) {
-      processNextInQueue();
-    }
-  }, [processingQueue, isProcessingEnabled]);
+    bufferManager.setCallbacks(
+      (progress, id) => {
+        setUploadProgress(progress);
+      },
+      (result, id) => {
+        handleNewRecording(result);
+      }
+    );
+  }, []);
 
   const cleanupRecording = async () => {
     try {
@@ -97,16 +106,23 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
 
       const uri = recording.getURI();
       await cleanupRecording();
-      setIsRecording(false); // Set recording state to false
+      setIsRecording(false);
       
-      // Add to processing queue and continue
-      addToProcessingQueue(uri);
-      setMessage("Ready to record");
+      // Add to buffer manager instead of direct processing
+      bufferManager.addRecording(uri);
+      
+      const status = bufferManager.getBufferStatus();
+      setBufferStatus({
+        pending: status.pending,
+        processing: status.isProcessing
+      });
+
+      setMessage(`Recording queued (${status.pending} pending)`);
 
     } catch (err) {
       console.error('Stop recording error:', err);
       setMessage("Failed to stop recording");
-      setIsRecording(false); // Ensure recording state is false on error
+      setIsRecording(false);
     }
   }
 
@@ -124,41 +140,42 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     }
   };
 
-  const processNextInQueue = async () => {
-    if (processingQueue.length === 0) return;
-    
-    setIsProcessingEnabled(false);
-    setIsProcessing(true);
-    const nextItem = processingQueue[0];
+  const processNextRecording = useCallback(async () => {
+    if (pendingRecordings.length === 0 || processingIndex >= 0) return;
 
     try {
-      setMessage("Processing audio...");
-      const response = await uploadAudio(nextItem.uri, (progress) => {
+      setProcessingIndex(0);
+      const recording = pendingRecordings[0];
+      setMessage(`Processing recording ${1}/${pendingRecordings.length}...`);
+
+      const response = await uploadAudio(recording.uri, (progress) => {
         setUploadProgress(progress);
       });
-      
-      // Remove the colab_response check since server sends response directly
-      if (!response) {
-        throw new Error('Empty response from server');
-      }
-      
+
       handleNewRecording(response);
-      setMessage("Processing complete");
+      
+      // Remove processed recording and move to next
+      setPendingRecordings(prev => prev.slice(1));
+      setProcessingIndex(-1);
+      
+      // Process next if available
+      if (pendingRecordings.length > 1) {
+        processNextRecording();
+      }
     } catch (error) {
       console.error('Processing error:', error);
-      setMessage(`Error: ${error.message}`);
-      Alert.alert('Processing Error', error.message);
-    } finally {
-      setProcessingQueue(queue => queue.slice(1));
-      setIsProcessingEnabled(true);
-      setIsProcessing(false);
-      setUploadProgress(0);
+      setMessage(`Error processing recording: ${error.message}`);
+      // Skip failed recording
+      setPendingRecordings(prev => prev.slice(1));
+      setProcessingIndex(-1);
     }
-  };
+  }, [pendingRecordings, processingIndex]);
 
-  const addToProcessingQueue = (uri) => {
-    setProcessingQueue(queue => [...queue, { uri, timestamp: Date.now() }]);
-  };
+  useEffect(() => {
+    if (pendingRecordings.length > 0 && processingIndex === -1) {
+      processNextRecording();
+    }
+  }, [pendingRecordings, processingIndex, processNextRecording]);
 
   const playTTSAudio = async (audioUrl, transcriptionId) => {
     try {
@@ -258,12 +275,40 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   };
 
   const renderProcessingOverlay = () => {
-    if (!isProcessing) return null;
+    if (processingIndex === -1) return null;
     
     return (
       <View style={styles.processingOverlay}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.processingText}>Processing... {uploadProgress}%</Text>
+        <LoadingAnimation />
+        <Text style={styles.processingText}>
+          Processing recording {processingIndex + 1}/{pendingRecordings.length}
+          {"\n"}Progress: {uploadProgress}%
+        </Text>
+      </View>
+    );
+  };
+
+  const renderPendingCount = () => {
+    if (pendingRecordings.length === 0) return null;
+
+    return (
+      <View style={styles.pendingContainer}>
+        <Text style={styles.pendingText}>
+          Pending recordings: {pendingRecordings.length}
+        </Text>
+      </View>
+    );
+  };
+
+  const renderBufferStatus = () => {
+    if (bufferStatus.pending === 0) return null;
+
+    return (
+      <View style={styles.bufferStatus}>
+        <Text style={styles.bufferText}>
+          {bufferStatus.pending} recording{bufferStatus.pending > 1 ? 's' : ''} queued
+          {bufferStatus.processing ? ' (Processing...)' : ''}
+        </Text>
       </View>
     );
   };
@@ -288,13 +333,15 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Voice Recorder</Text>
+        <Text style={styles.title}>Avaass</Text>
         <TouchableOpacity onPress={onNavigateToHistory}>
           <Text style={styles.historyButton}>History</Text>
         </TouchableOpacity>
       </View>
 
       {renderProcessingOverlay()}
+      {renderPendingCount()}
+      {renderBufferStatus()}
 
       <View style={styles.transcriptionContainer}>
         <Text style={styles.containerTitle}>Transcriptions</Text>
@@ -501,6 +548,29 @@ const styles = StyleSheet.create({
   audioButtonText: {
     fontSize: 20,
     color: colors.textLight,
+  },
+  pendingContainer: {
+    backgroundColor: colors.primaryLight,
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  pendingText: {
+    color: colors.textLight,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  bufferStatus: {
+    backgroundColor: colors.primaryLight,
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  bufferText: {
+    color: colors.textLight,
+    fontSize: 14,
+    textAlign: 'center',
   },
 });
 

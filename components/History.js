@@ -1,40 +1,48 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, ActivityIndicator, Alert, Share } from 'react-native';
-import { AntDesign } from '@expo/vector-icons'; // Add this import
+import React, { useState, useEffect } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Share, Alert } from 'react-native';
 import { colors, shadows } from '../styles/theme';
-import { getNotes, deleteNote } from '../firebase/storage';
+import LoadingAnimation from './LoadingAnimation';
+import { deleteNote } from '../firebase/storage';
 
-export default function History({ onBack }) {
-  const [notes, setNotes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+export default function History({ savedTranscriptions = [], onBack, onDelete }) {
+  const [isLoading, setIsLoading] = useState(true);
+  const [data, setData] = useState([]);
 
   useEffect(() => {
-    loadNotes();
-  }, []);
+    // Simulate loading delay
+    const loadData = async () => {
+      setIsLoading(true);
+      try {
+        // Wait for 3 seconds to show loading animation
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        setData(savedTranscriptions);
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  const loadNotes = async () => {
+    loadData();
+  }, [savedTranscriptions]);
+
+  const handleShare = async (group) => {
     try {
-      setLoading(true);
-      setError(null);
-      const fetchedNotes = await getNotes();
-      setNotes(fetchedNotes);
+      const message = group.items
+        .map(item => `${item.timestamp}: ${item.text}`)
+        .join('\n\n');
+      
+      await Share.share({
+        message,
+        title: 'Transcription History'
+      });
     } catch (error) {
-      console.error('Failed to load notes:', error);
-      setError(error.message);
-    } finally {
-      setLoading(false);
+      Alert.alert('Error', 'Failed to share transcriptions');
     }
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
-  };
-
-  const handleDelete = async (noteId) => {
+  const handleDelete = async (groupId) => {
     Alert.alert(
-      'Delete Note',
-      'Are you sure you want to delete this note?',
+      'Delete Transcription',
+      'Are you sure you want to delete this transcription? This cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -42,54 +50,20 @@ export default function History({ onBack }) {
           style: 'destructive',
           onPress: async () => {
             try {
-              setLoading(true);
-              await deleteNote(noteId);
-              await loadNotes(); // Reload notes after deletion
-              Alert.alert('Success', 'Note deleted successfully');
+              setIsLoading(true);
+              await deleteNote(groupId);
+              setData(prev => prev.filter(group => group.id !== groupId));
+              onDelete?.(groupId); // Notify parent component
             } catch (error) {
-              console.error('Delete error:', error);
-              Alert.alert('Error', 'Failed to delete note');
+              Alert.alert('Error', 'Failed to delete transcription');
             } finally {
-              setLoading(false);
+              setIsLoading(false);
             }
           }
         }
       ]
     );
   };
-
-  const handleShare = async (note) => {
-    try {
-      const shareText = note.items
-        .map(item => `${item.text} (${item.timestamp})`)
-        .join('\n\n');
-      
-      await Share.share({
-        message: shareText,
-        title: 'Shared Transcription'
-      });
-    } catch (error) {
-      console.error('Share error:', error);
-      Alert.alert('Error', 'Failed to share note');
-    }
-  };
-
-  const renderNoteActions = (note) => (
-    <View style={styles.noteActions}>
-      <TouchableOpacity 
-        onPress={() => handleShare(note)}
-        style={[styles.actionButton, styles.iconButton]}
-      >
-        <AntDesign name="sharealt" size={20} color={colors.textLight} />
-      </TouchableOpacity>
-      <TouchableOpacity 
-        onPress={() => handleDelete(note.id)}
-        style={[styles.actionButton, styles.iconButton, styles.deleteButton]}
-      >
-        <AntDesign name="delete" size={20} color={colors.textLight} />
-      </TouchableOpacity>
-    </View>
-  );
 
   return (
     <View style={styles.container}>
@@ -98,41 +72,50 @@ export default function History({ onBack }) {
           <Text style={styles.backText}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>History</Text>
-        <TouchableOpacity onPress={loadNotes} style={styles.refreshButton}>
-          <Text style={styles.refreshText}>↻</Text>
-        </TouchableOpacity>
       </View>
-
-      {loading ? (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={styles.loadingText}>Loading transcriptions...</Text>
-        </View>
-      ) : error ? (
-        <View style={styles.centered}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={loadNotes} style={styles.retryButton}>
-            <Text style={styles.retryText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      ) : notes.length === 0 ? (
-        <View style={styles.centered}>
-          <Text style={styles.emptyText}>No saved transcriptions yet</Text>
+      
+      {isLoading ? (
+        <View style={styles.loadingContainer}>
+          <LoadingAnimation />
         </View>
       ) : (
         <ScrollView style={styles.scrollView}>
-          {notes.map((note) => (
-            <View key={note.id} style={styles.noteCard}>
-              <Text style={styles.noteDate}>{formatDate(note.createdAt)}</Text>
-              {note.items?.map((item, itemIndex) => (
-                <View key={itemIndex} style={styles.transcriptionItem}>
-                  <Text style={styles.transcriptionText}>{item.text}</Text>
-                  <Text style={styles.timestamp}>{item.timestamp}</Text>
+          {data.length === 0 ? (
+            <Text style={styles.emptyText}>No transcription history</Text>
+          ) : (
+            data.map((group, index) => (
+              <View key={index} style={styles.transcriptionGroup}>
+                <View style={styles.groupHeader}>
+                  <Text style={styles.groupDate}>
+                    {new Date(group.savedAt).toLocaleDateString()}
+                  </Text>
+                  <View style={styles.groupActions}>
+                    <TouchableOpacity 
+                      onPress={() => handleShare(group)}
+                      style={styles.actionButton}
+                    >
+                      <Text style={styles.actionIcon}>📤</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      onPress={() => handleDelete(group.id)}
+                      style={styles.actionButton}
+                    >
+                      <Text style={styles.actionIcon}>🗑️</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              ))}
-              {renderNoteActions(note)}
-            </View>
-          ))}
+                {group.items.map((item, itemIndex) => (
+                  <View key={item.id} style={styles.transcriptionItem}>
+                    <Text style={styles.itemNumber}>{itemIndex + 1}.</Text>
+                    <View style={styles.itemContent}>
+                      <Text style={styles.transcriptionText}>{item.text}</Text>
+                      <Text style={styles.timestamp}>{item.timestamp}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ))
+          )}
         </ScrollView>
       )}
     </View>
@@ -168,86 +151,77 @@ const styles = StyleSheet.create({
     color: colors.text,
     textAlign: 'center',
   },
-  noteCard: {
-    backgroundColor: colors.inputBg,
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 20,
-    ...shadows.main,
-  },
-  noteDate: {
-    fontSize: 14,
-    color: colors.secondary,
-    marginBottom: 10,
-    fontWeight: '500',
-  },
-  transcriptionItem: {
-    backgroundColor: colors.background,
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primary,
-  },
-  centered: {
+  loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    marginTop: 10,
-    color: colors.secondary,
+  transcriptionGroup: {
+    backgroundColor: colors.inputBg,
+    borderRadius: 12,
+    marginBottom: 16,
+    padding: 16,
+    ...shadows.main,
   },
-  errorText: {
-    color: colors.error,
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-  retryButton: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryText: {
-    color: colors.textLight,
-    fontWeight: '600',
-  },
-  emptyText: {
-    color: colors.secondary,
-    fontStyle: 'italic',
-  },
-  refreshButton: {
-    position: 'absolute',
-    right: 0,
-    padding: 10,
-  },
-  refreshText: {
-    color: colors.primary,
-    fontSize: 20,
-    fontWeight: '600',
-  },
-  noteActions: {
+  groupHeader: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    paddingTop: 10,
-    marginTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    gap: 15,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  groupDate: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  groupActions: {
+    flexDirection: 'row',
+    gap: 12,
   },
   actionButton: {
     padding: 8,
-    borderRadius: 20,
   },
-  iconButton: {
-    backgroundColor: colors.primary,
-    width: 36,
-    height: 36,
-    justifyContent: 'center',
-    alignItems: 'center',
+  actionIcon: {
+    fontSize: 20,
   },
-  deleteButton: {
-    backgroundColor: colors.error,
+  transcriptionItem: {
+    flexDirection: 'row',
+    backgroundColor: colors.background,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  itemNumber: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
+    marginRight: 8,
+    width: 24,
+  },
+  itemContent: {
+    flex: 1,
+  },
+  transcriptionText: {
+    fontSize: 15,
+    color: colors.text,
+    marginBottom: 4,
+    lineHeight: 20,
+  },
+  timestamp: {
+    fontSize: 12,
+    color: colors.secondary,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: colors.secondary,
+    fontSize: 16,
+    marginTop: 40,
+    fontStyle: 'italic',
+  },
+  scrollView: {
+    flex: 1,
   }
 });

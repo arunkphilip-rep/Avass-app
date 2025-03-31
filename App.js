@@ -50,6 +50,16 @@ export default function App() {
     setSavedTranscriptions(prev => [...prev, newGroup]);
   };
 
+  const handleNavigateToHistory = () => {
+    setCurrentScreen('history');
+  };
+
+  const handleDeleteTranscription = (transcriptionId) => {
+    setSavedTranscriptions(prev => 
+      prev.filter(transcription => transcription.id !== transcriptionId)
+    );
+  };
+
   return (
     <View style={styles.container}>
       {!isLoggedIn ? (
@@ -57,12 +67,13 @@ export default function App() {
       ) : currentScreen === 'main' ? (
         <AudioRecorder 
           onSave={handleSavedTranscriptions}
-          onNavigateToHistory={() => setCurrentScreen('history')}
+          onNavigateToHistory={handleNavigateToHistory}
         />
       ) : (
         <History 
           savedTranscriptions={savedTranscriptions}
           onBack={() => setCurrentScreen('main')}
+          onDelete={handleDeleteTranscription}
         />
       )}
     </View>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, ActivityIndicator } from 'react-native'; // Importing ActivityIndicator
 import { Audio } from 'expo-av';
 import AudioRecorder from './components/AudioRecorder';
+import LoadingAnimation from './components/LoadingAnimation'; // Importing LoadingAnimation
 import Login from './components/Login';
 import History from './components/History';
 import { auth } from './firebase/config';

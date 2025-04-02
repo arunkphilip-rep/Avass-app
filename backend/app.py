@@ -49,10 +49,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float16" if device == "cuda" else "float32"
 
 # ✅ Load Faster-Whisper Model
-whisper_model = WhisperModel("tiny.en", device=device, compute_type=compute_type)
+whisper_model = WhisperModel("large-v3", device=device, compute_type=compute_type)
 
 # ✅ TTS Configuration
-TTS_MODEL = "tts_models/en/ljspeech/vits"  # Use the model that worked
+TTS_MODEL = "tts_models/en/ljspeech/glow-tts"  # Use the model that worked
 TTS_TEST_TEXT = "System initialization complete."
 tts = None
 
@@ -124,14 +124,14 @@ def process_single_audio(audio_path, session_id):
         try:
             # Step 1: Transcription
             logger.info("Step 1: Starting transcription")
-            segments, _ = whisper_model.transcribe(audio_path)
+            segments, _ = whisper_model.transcribe(audio_path,language="en")
             transcription = " ".join([seg.text.strip() for seg in segments])
             
             # Update transcription status
             processing_status[session_id].update({
                 'transcription_complete': True,
                 'transcription': transcription
-            })
+            }) 
             
             logger.info(f"✅ Transcription complete: {transcription}")
 

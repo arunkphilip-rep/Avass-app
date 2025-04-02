@@ -24,10 +24,20 @@ logger = logging.getLogger(__name__)
 
 # ✅ Flask Configuration
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={
+    r"/*": {
+        "origins": [
+            "https://purely-unbiased-ram.ngrok-free.app",
+            "http://localhost:5000",
+            "http://192.168.1.3:5000"
+        ],
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
-# Add server host/port config
-SERVER_HOST = '192.168.1.3'
+# Update server configuration
+SERVER_HOST = '0.0.0.0'  # Listen on all interfaces
 SERVER_PORT = 5000
 
 # ✅ Set TTS Output Directory
@@ -136,7 +146,11 @@ def process_single_audio(audio_path, session_id):
                 tts.tts_to_file(text=transcription, file_path=output_path)
                 logger.info(f"✅ TTS file generated: {output_path}")
                 
-                tts_audio_url = f"http://{SERVER_HOST}:{SERVER_PORT}/tts_audio/{output_file}"
+                # Use ngrok URL for TTS audio
+                ngrok_url = "https://purely-unbiased-ram.ngrok-free.app"
+                tts_audio_url = f"{ngrok_url}/api/tts_audio/{output_file}"
+                
+                logger.info(f"Generated TTS URL: {tts_audio_url}")
 
                 # Update complete status
                 processing_status[session_id].update({
@@ -308,19 +322,29 @@ def buffer_upload():
         return jsonify({"error": str(e)}), 500
 
 # ✅ Serve TTS Audio
-@app.route('/tts_audio/<filename>', methods=['GET'])
+@app.route('/api/tts_audio/<filename>', methods=['GET'])
 def serve_audio(filename):
     file_path = os.path.join(TTS_OUTPUT_DIR, filename)
+    logger.info(f"Request for audio file: {filename}")
+    logger.info(f"Full path: {file_path}")
 
     if not os.path.exists(file_path):
-        logger.error(f"❌ File not found or expired: {filename}")
-        return jsonify({"error": "❌ File not found or expired"}), 404
+        logger.error(f"❌ File not found: {file_path}")
+        return jsonify({"error": "File not found"}), 404
 
-    logger.info(f"✅ Serving file: {filename}")
-    # Schedule Deletion After Serving
-    Thread(target=delete_file_after_delay, args=(file_path, 10)).start()
-
-    return send_file(file_path, as_attachment=True)
+    try:
+        logger.info(f"✅ Serving audio file: {filename}")
+        response = send_file(
+            file_path,
+            mimetype='audio/wav',
+            as_attachment=False,
+            download_name=filename
+        )
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        return response
+    except Exception as e:
+        logger.error(f"❌ Error serving file: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 # ✅ Status Check Route
 @app.route('/status/<session_id>', methods=['GET'])
@@ -348,4 +372,4 @@ if __name__ == "__main__":
         logger.error("❌ Failed to initialize TTS system")
         exit(1)
     start_processing_threads()
-    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=True)
+    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False, threaded=True)

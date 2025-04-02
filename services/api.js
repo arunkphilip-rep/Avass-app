@@ -7,26 +7,29 @@ import * as Network from 'expo-network';
 // Dynamic API URL configuration
 const getApiUrl = async () => {
   try {
-    if (__DEV__) {
-      const serverIP = '192.168.1.3'; // Match Flask server IP
-      const serverPort = 5000;
-      const serverUrl = `http://${serverIP}:${serverPort}`;
-      
+    const networkState = await Network.getNetworkStateAsync();
+    if (!networkState.isConnected) {
+      throw new Error('No network connection');
+    }
+
+    const serverUrls = [
+      'https://purely-unbiased-ram.ngrok-free.app',  // Primary ngrok URL
+      'http://192.168.1.3:5000',                     // Local fallback
+      'http://10.0.2.2:5000'                         // Emulator fallback
+    ];
+
+    for (const url of serverUrls) {
       try {
-        const response = await fetch(`${serverUrl}/health`, {
-          method: 'GET',
-          timeout: 5000
-        });
+        const response = await fetch(`${url}/health`, { timeout: 5000 });
         if (response.ok) {
-          console.log('✅ Connected to server:', serverUrl);
-          return serverUrl;
+          console.log('✅ Connected to server:', url);
+          return url;
         }
       } catch (e) {
-        console.error('❌ Failed to connect to server:', e.message);
-        throw new Error('Server connection failed');
+        console.log(`❌ Failed to connect to ${url}`);
       }
     }
-    return 'https://your-production-server.com';
+    throw new Error('No server found');
   } catch (error) {
     console.error('Network configuration failed:', error);
     throw error;
@@ -59,7 +62,9 @@ const checkProcessingStatus = async (sessionId) => {
     if (!response.ok) {
       throw new Error('Failed to check processing status');
     }
-    return await response.json();
+    const data = await response.json();
+    console.log('Status check response:', data);
+    return data;
   } catch (error) {
     console.error('Status check error:', error);
     throw error;
@@ -69,10 +74,20 @@ const checkProcessingStatus = async (sessionId) => {
 const playGeneratedAudio = async (audioUrl, retries = 3) => {
   for (let i = 0; i < retries; i++) {
     try {
+      console.log('Attempting to play audio:', audioUrl);
+      
       const { sound } = await Audio.Sound.createAsync(
         { uri: audioUrl },
-        { shouldPlay: false }
+        { shouldPlay: true, volume: 1.0 },
+        (status) => {
+          console.log('Loading status:', status);
+          if (status.error) {
+            console.error('Audio loading error:', status.error);
+          }
+        }
       );
+
+      await sound.playAsync();
       return sound;
     } catch (error) {
       console.warn(`Attempt ${i + 1} failed:`, error);
@@ -189,9 +204,17 @@ const performUpload = async (fileUri, onProgress) => {
           console.log('📊 Processing status:', status);
           
           if (status.status === 'completed') {
+            console.log('Audio URL received:', status.tts_audio_url);
+            // Always ensure HTTPS ngrok URL
+            const ttsUrl = status.tts_audio_url.includes('0.0.0.0') ? 
+              status.tts_audio_url.replace('http://0.0.0.0:5000', 'https://purely-unbiased-ram.ngrok-free.app') :
+              status.tts_audio_url;
+            
             return {
-              transcription: status.transcription,
-              tts_audio_url: status.tts_audio_url,
+              colab_response: {
+                transcription: status.transcription,
+                tts_audio_url: ttsUrl,
+              },
               status: 'completed'
             };
           } else if (status.status === 'failed') {

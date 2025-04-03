@@ -1,10 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, ActivityIndicator, ScrollView, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  StyleSheet, 
+  Text, 
+  View, 
+  TouchableOpacity, 
+  ActivityIndicator, 
+  ScrollView, 
+  Alert,
+  Animated,
+  Vibration,
+  Dimensions,
+  Platform
+} from 'react-native';
 import { Audio } from 'expo-av';
-import { uploadAudio } from '../services/api';
-import { colors, shadows } from '../styles/theme';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
+import { uploadAudio, API_URL, initializeApi } from '../services/api'; 
+import { saveTranscriptionNote } from '../firebase/storage';
+import { colors, shadows, typography, borderRadius, spacing } from '../styles/theme';
+import GPUStatus from './GPUStatus';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
+const AudioRecorder = ({ navigation }) => {
   const [recording, setRecording] = useState(null);
   const [sound, setSound] = useState(null);
   const [message, setMessage] = useState("Press button to start recording");
@@ -20,14 +37,38 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
   const [currentlyPlaying, setCurrentlyPlaying] = useState(null);
   const [transcriptions, setTranscriptions] = useState([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [currentSound, setCurrentSound] = useState(null);
+  const [playedAudios, setPlayedAudios] = useState(new Set());
+  const [serverUrl, setServerUrl] = useState(null);
+  const [isOfflineMode, setIsOfflineMode] = useState(false); // Add a new state variable to track offline mode
+  const [noiseLevel, setNoiseLevel] = useState(0);
+  const [isNoisyEnvironment, setIsNoisyEnvironment] = useState(false);
+  const noiseLevelRef = useRef(null);
+  const audioAnalyzerIntervalRef = useRef(null);
 
   useEffect(() => {
+    const checkServerStatus = async () => {
+      try {
+        await initializeApi();
+        // Check if we're in mock/offline mode
+        setIsOfflineMode(API_URL === 'mock-api');
+      } catch (error) {
+        console.error('Server check failed:', error);
+        setIsOfflineMode(true);
+      }
+    };
+    
+    checkServerStatus();
+    
     return () => {
       if (recording) {
         stopRecording().catch(console.error);
       }
       if (sound) {
         sound.unloadAsync().catch(console.error);
+      }
+      if (currentSound) {
+        currentSound.unloadAsync();
       }
     };
   }, []);
@@ -74,213 +115,379 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
         playThroughEarpieceAndroid: false,
       });
 
-      const newRecording = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      // Enhanced recording options with advanced noise cancellation
+      const recordingOptions = {
+        ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+        android: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.DEFAULT,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          // Enable advanced noise suppression and automatic gain control
+          enableNoiseSuppression: true,
+          enableAGC: true,
+          // Set noise suppression level to maximum
+          noiseSuppressorQuality: 'high',
+        },
+        ios: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.MAX,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          ...Audio.RecordingOptionsPresets.HIGH_QUALITY.web,
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      };
+
+      const newRecording = await Audio.Recording.createAsync(recordingOptions);
       setRecording(newRecording.recording);
-      setIsRecording(true); // Set recording state to true
       setMessage("Recording...");
+      setIsRecording(true);
     } catch (err) {
-      console.error('Start recording error:', err);
-      setMessage("Failed to start recording");
-      setIsRecording(false); // Ensure recording state is false on error
+      console.error('Failed to start recording', err);
+      handleUploadError(err);
     }
   }
 
   async function stopRecording() {
-    try {
-      if (!recording) return;
-
-      const uri = recording.getURI();
+    setIsRecording(false);
+    setMessage("Press button to start recording");
+    if (recording) {
       await cleanupRecording();
-      setIsRecording(false); // Set recording state to false
-      
-      // Add to processing queue and continue
-      addToProcessingQueue(uri);
-      setMessage("Ready to record");
-
-    } catch (err) {
-      console.error('Stop recording error:', err);
-      setMessage("Failed to stop recording");
-      setIsRecording(false); // Ensure recording state is false on error
+      const uri = recording.getURI(); 
+      if (uri) {
+        setRecordings([...recordings, uri]);
+      }
     }
   }
 
-  const processNextInQueue = async () => {
-    if (processingQueue.length === 0) return;
-    
-    setIsProcessingEnabled(false);
+  const processNextInQueue = useCallback(async () => {
+    if (processingQueue.length === 0) {
+      setIsProcessing(false);
+      return;
+    }
+
     setIsProcessing(true);
-    const nextItem = processingQueue[0];
+    const [nextItem, ...rest] = processingQueue;
+    setProcessingQueue(rest);
 
     try {
-      setMessage("Processing audio...");
-      const response = await uploadAudio(nextItem.uri, (progress) => {
-        setUploadProgress(progress);
-      });
-      
-      if (!response || !response.colab_response) {
-        throw new Error('Invalid server response');
-      }
-      
-      handleNewRecording(response);
-      setMessage("Processing complete");
+      const result = await nextItem();
+      setColabResult(result);
     } catch (error) {
       console.error('Processing error:', error);
-      setMessage(`Error: ${error.message}`);
-      Alert.alert('Processing Error', 'Failed to process audio. Please try again.');
     } finally {
-      setProcessingQueue(queue => queue.slice(1));
-      setIsProcessingEnabled(true);
       setIsProcessing(false);
-      setUploadProgress(0);
     }
-  };
+  }, [processingQueue]);
 
-  const addToProcessingQueue = (uri) => {
-    setProcessingQueue(queue => [...queue, { uri, timestamp: Date.now() }]);
-  };
-
-  const handleNewRecording = (result) => {
-    const colabData = result.colab_response;
-    console.log('Processing Colab response:', colabData);
-
-    if (colabData?.transcription && colabData?.tts_audio_url) {
-      // Add transcription to the transcriptions list
-      setTranscriptions(prev => [...prev, {
-        id: Date.now(),
-        text: colabData.transcription,
-        timestamp: new Date().toLocaleTimeString()
-      }]);
-
-      // Automatically play audio in background
-      playTTSAudio(colabData.tts_audio_url);
+  const handleUpload = async () => {
+    if (isUploading) {
+      return;
     }
-  };
 
-  const playTTSAudio = async (audioUrl) => {
+    setIsUploading(true);
+    setUploadProgress(0);
+
     try {
-      if (sound) {
-        await sound.unloadAsync();
-        setSound(null);
+      const uri = recordings[recordings.length - 1];
+      if (!uri) {
+        throw new Error('No recording found');
       }
 
-      // Ensure valid URL
-      const validUrl = audioUrl.includes('0.0.0.0') ?
-        audioUrl.replace('http://0.0.0.0:5000', 'https://purely-unbiased-ram.ngrok-free.app') :
-        audioUrl;
-        
-      console.log('Loading TTS audio from:', validUrl);
-      
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: validUrl },
-        { shouldPlay: true, volume: 1.0 },
-        (status) => {
-          console.log('Loading status:', status);
-          if (status.error) {
-            console.error('Audio loading error:', status.error);
-            Alert.alert('Audio Error', 'Failed to load audio');
-          }
-        }
-      );
-
-      await newSound.playAsync();
-      console.log('Started playing audio');
-
-      newSound.setOnPlaybackStatusUpdate((status) => {
-        if (status.didJustFinish) {
-          console.log('Audio finished playing');
-          newSound.unloadAsync().then(() => {
-            setSound(null);
-          });
-        }
-        if (status.error) {
-          console.error('Playback error:', status.error);
-        }
-      });
+      const response = await uploadAudio(uri, setUploadProgress);
+      if (response) {
+        setMessage('Upload successful');
+        onSave(response);
+      }
     } catch (error) {
-      console.error('TTS playback error:', error);
-      Alert.alert('Audio Error', `Failed to play audio. Please try again.`);
-      // Cleanup on error
-      if (sound) {
-        await sound.unloadAsync();
-        setSound(null);
+      console.error('Upload error:', error);
+      handleUploadError(error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  // Add new animation variables
+  const insets = useSafeAreaInsets();
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const recordingDuration = useRef(0);
+  const recordingTimer = useRef(null);
+  const [recordingTime, setRecordingTime] = useState(0);
+  
+  // Add visual pulse animation when recording
+  useEffect(() => {
+    if (isRecording) {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1000,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+      
+      // Start recording timer
+      recordingTimer.current = setInterval(() => {
+        recordingDuration.current += 1;
+        setRecordingTime(recordingDuration.current);
+      }, 1000);
+      
+      // Provide haptic feedback when recording starts
+      if (Platform.OS !== 'web') {
+        Vibration.vibrate(150);
       }
+    } else {
+      // Stop animations and timer when not recording
+      Animated.timing(pulseAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+      
+      if (recordingTimer.current) {
+        clearInterval(recordingTimer.current);
+        recordingTimer.current = null;
+      }
+      
+      recordingDuration.current = 0;
+      setRecordingTime(0);
     }
+    
+    return () => {
+      if (recordingTimer.current) {
+        clearInterval(recordingTimer.current);
+      }
+    };
+  }, [isRecording, pulseAnim]);
+
+  // Format recording time in mm:ss format
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const handleSaveTranscriptions = () => {
-    if (transcriptions.length > 0) {
-      const group = {
-        savedAt: new Date().toLocaleString(),
-        items: [...transcriptions]
-      };
-      onSave(group);
-      setTranscriptions([]); // Clear current transcriptions
-    }
+  const renderNoiseLevelIndicator = () => {
+    if (!isRecording) return null;
+    
+    return (
+      <View style={styles.noiseLevelContainer}>
+        <Text style={styles.noiseLevelLabel}>
+          Noise Level {isNoisyEnvironment ? '(High)' : '(Good)'}
+        </Text>
+        <View style={styles.noiseLevelBar}>
+          <View 
+            style={[
+              styles.noiseLevelFill, 
+              { 
+                width: `${noiseLevel}%`,
+                backgroundColor: isNoisyEnvironment ? colors.error : 
+                  noiseLevel > 50 ? colors.warning : colors.success 
+              }
+            ]} 
+          />
+        </View>
+      </View>
+    );
   };
 
+  // Render processing overlay with animated indicator
   const renderProcessingOverlay = () => {
     if (!isProcessing) return null;
     
     return (
       <View style={styles.processingOverlay}>
-        <ActivityIndicator size="large" color={colors.primary} />
-        <Text style={styles.processingText}>Processing... {uploadProgress}%</Text>
+        <View style={styles.processingCard}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={styles.processingText}>
+            Processing audio...{"\n"}
+            <Text style={styles.processingSubtext}>
+              {uploadProgress > 0 ? `${Math.round(uploadProgress)}%` : ''}
+            </Text>
+          </Text>
+        </View>
       </View>
     );
   };
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Voice Recorder</Text>
-        <TouchableOpacity onPress={onNavigateToHistory}>
-          <Text style={styles.historyButton}>History</Text>
-        </TouchableOpacity>
-      </View>
-
-      {renderProcessingOverlay()}
-
-      <View style={styles.transcriptionContainer}>
-        <Text style={styles.containerTitle}>Transcriptions</Text>
-        <ScrollView style={styles.scrollView}>
-          {transcriptions.length === 0 ? (
-            <Text style={styles.emptyText}>No transcriptions yet</Text>
-          ) : (
-            transcriptions.map(item => (
-              <View key={item.id} style={styles.transcriptionItem}>
-                <Text style={styles.transcriptionText}>{item.text}</Text>
-                <Text style={styles.timestamp}>{item.timestamp}</Text>
-              </View>
-            ))
-          )}
-        </ScrollView>
-        <View style={styles.buttonContainer}>
+  const renderTranscriptionItem = (item) => (
+    <Animated.View 
+      key={item.id} 
+      style={styles.transcriptionItem}
+      entering={Animated.FadeInUp.duration(300).delay(100)}
+    >
+      <View style={styles.transcriptionContent}>
+        <Text style={styles.transcriptionText}>{item.text}</Text>
+        {item.audioUrl && !playedAudios.has(item.id) && (
           <TouchableOpacity 
-            style={[styles.actionButton, styles.saveButton]}
-            onPress={handleSaveTranscriptions}
+            onPress={() => playTTSAudio(item.audioUrl, item.id)}
+            style={styles.audioButton}
+            activeOpacity={0.7}
           >
-            <Text style={styles.buttonText}>Save</Text>
+            <FontAwesome5 name="volume-up" size={16} color={colors.textLight} />
+          </TouchableOpacity>
+        )}
+      </View>
+      <Text style={styles.timestamp}>{item.timestamp}</Text>
+    </Animated.View>
+  );
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {renderProcessingOverlay()}
+      
+      {isOfflineMode && (
+        <View style={styles.offlineBanner}>
+          <FontAwesome5 name="exclamation-triangle" size={14} color={colors.textLight} style={styles.offlineIcon} />
+          <Text style={styles.offlineBannerText}>
+            Offline Mode: Demo functions only
+          </Text>
+        </View>
+      )}
+      
+      <View style={styles.header}>
+        <Text style={styles.title}>Voice Assistant</Text>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity 
+            style={styles.iconButton} 
+            onPress={() => navigation.navigate('VoiceFinetuning', { userId: auth.currentUser?.uid })}
+            activeOpacity={0.7}
+          >
+            <FontAwesome5 name="sliders-h" size={18} color={colors.primary} />
           </TouchableOpacity>
           <TouchableOpacity 
-            style={[styles.actionButton, styles.clearButton]}
-            onPress={() => setTranscriptions([])}
+            style={styles.historyButton} 
+            onPress={() => navigation.navigate('History')}
+            activeOpacity={0.7}
           >
-            <Text style={styles.buttonText}>Clear</Text>
+            <FontAwesome5 name="history" size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <View style={styles.controlsContainer}>
-        <Text style={styles.message}>{message}</Text>
-        <TouchableOpacity 
-          style={[styles.recordButton, isRecording && styles.recordingActive]}
-          onPress={() => isRecording ? stopRecording() : startRecording()}
-          disabled={isUploading || isProcessing}
-        >
-          <Text style={styles.buttonText}>
-            {isRecording ? 'Stop Recording' : 'Start Recording'}
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollViewContent}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.transcriptionContainer}>
+          <Text style={styles.containerTitle}>Transcriptions</Text>
+          
+          {transcriptions.length === 0 ? (
+            <View style={styles.emptyStateContainer}>
+              <FontAwesome5 name="comment-alt" size={40} color={colors.inactive} />
+              <Text style={styles.emptyText}>No transcriptions yet</Text>
+              <Text style={styles.emptySubtext}>Tap the button below to start recording</Text>
+            </View>
+          ) : (
+            <>
+              {transcriptions.map(renderTranscriptionItem)}
+              
+              <View style={styles.buttonContainer}>
+                <TouchableOpacity 
+                  style={styles.actionButton}
+                  onPress={handleSaveTranscriptions}
+                  activeOpacity={0.7}
+                  disabled={isProcessing}
+                >
+                  <LinearGradient
+                    colors={[colors.primary, colors.primaryDark]}
+                    style={styles.gradientButton}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                  >
+                    <FontAwesome5 name="save" size={14} color={colors.textLight} style={styles.buttonIcon} />
+                    <Text style={styles.buttonText}>Save</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.actionButton, styles.clearButton]}
+                  onPress={() => {
+                    Alert.alert(
+                      "Clear Transcriptions", 
+                      "Are you sure you want to clear all transcriptions?",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        { text: "Clear", style: "destructive", onPress: () => setTranscriptions([]) }
+                      ]
+                    );
+                  }}
+                  activeOpacity={0.7}
+                  disabled={isProcessing}
+                >
+                  <FontAwesome5 name="trash-alt" size={14} color={colors.textLight} style={styles.buttonIcon} />
+                  <Text style={styles.buttonText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+        </View>
+      </ScrollView>
+
+      <View style={styles.recorderContainer}>
+        {renderNoiseLevelIndicator()}
+        
+        <View style={styles.statusContainer}>
+          <Text style={[
+            styles.statusText,
+            isRecording && styles.recordingStatusText
+          ]}>
+            {isRecording ? `Recording ${formatTime(recordingTime)}` : message}
           </Text>
-        </TouchableOpacity>
+        </View>
+        
+        <View style={styles.controlsRow}>
+          <Animated.View style={{
+            transform: [{ scale: pulseAnim }]
+          }}>
+            <TouchableOpacity
+              style={[
+                styles.recordButton,
+                isRecording && styles.recordingActive
+              ]}
+              onPress={isRecording ? stopRecording : startRecording}
+              disabled={isProcessing}
+              activeOpacity={0.8}
+            >
+              <View style={styles.recordButtonInner}>
+                {isRecording ? (
+                  <FontAwesome5 name="stop" size={24} color={colors.textLight} />
+                ) : (
+                  <FontAwesome5 name="microphone" size={24} color={colors.textLight} />
+                )}
+              </View>
+            </TouchableOpacity>
+          </Animated.View>
+          
+          {isRecording && (
+            <TouchableOpacity 
+              style={styles.cancelButton}
+              onPress={cancelRecording}
+            >
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -290,121 +497,259 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 20,
+    paddingHorizontal: spacing.md,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    paddingVertical: spacing.md,
+  },
+  title: {
+    ...typography.heading2,
+    color: colors.text,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.round,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.small,
+    marginRight: spacing.md,
   },
   historyButton: {
-    color: colors.primary,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  transcriptionContainer: {
-    flex: 1,
-    backgroundColor: colors.inputBg,
-    borderRadius: 15,
-    padding: 15,
-    marginBottom: 20,
-    ...shadows.main,
-  },
-  containerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: colors.text,
-    marginBottom: 15,
-    textAlign: 'center',
+    width: 44,
+    height: 44,
+    borderRadius: borderRadius.round,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.small,
   },
   scrollView: {
     flex: 1,
   },
-  transcriptionItem: {
-    backgroundColor: colors.background,
-    padding: 15,
-    borderRadius: 10,
-    marginBottom: 10,
+  scrollViewContent: {
+    paddingBottom: spacing.xl,
+  },
+  transcriptionContainer: {
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
     ...shadows.main,
   },
-  transcriptionText: {
-    fontSize: 16,
+  containerTitle: {
+    ...typography.heading3,
     color: colors.text,
-    marginBottom: 5,
+    marginBottom: spacing.md,
+    paddingBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  timestamp: {
-    fontSize: 12,
-    color: colors.secondary,
-    textAlign: 'right',
+  emptyStateContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.xl * 2,
   },
   emptyText: {
-    textAlign: 'center',
-    color: colors.secondary,
-    fontStyle: 'italic',
-    marginTop: 20,
+    ...typography.body,
+    color: colors.textSecondary,
+    marginTop: spacing.md,
+  },
+  emptySubtext: {
+    ...typography.bodySmall,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  transcriptionItem: {
+    backgroundColor: colors.inputBg,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    ...shadows.small,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  transcriptionContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  transcriptionText: {
+    flex: 1,
+    ...typography.body,
+    color: colors.text,
+  },
+  timestamp: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+    textAlign: 'right',
   },
   buttonContainer: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    gap: spacing.md,
   },
   actionButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 15,
-    borderRadius: 8,
-  },
-  saveButton: {
-    backgroundColor: colors.primary,
+    flex: 1,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    ...shadows.small,
   },
   clearButton: {
     backgroundColor: colors.error,
   },
-  controlsContainer: {
-    padding: 20,
-    backgroundColor: colors.inputBg,
-    borderRadius: 15,
-    ...shadows.main,
+  gradientButton: {
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  buttonText: {
+    ...typography.button,
+    color: colors.textLight,
+  },
+  buttonIcon: {
+    marginRight: spacing.xs,
+  },
+  recorderContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    padding: spacing.lg,
+    ...shadows.large,
+  },
+  statusContainer: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  statusText: {
+    ...typography.body,
+    color: colors.textSecondary,
+  },
+  recordingStatusText: {
+    color: colors.secondary,
+    fontWeight: '600',
+  },
+  controlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   recordButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: colors.primary,
-    padding: 15,
-    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.main,
+  },
+  recordButtonInner: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.card,
+    justifyContent: 'center',
     alignItems: 'center',
   },
   recordingActive: {
+    backgroundColor: colors.secondary,
+  },
+  cancelButton: {
+    position: 'absolute',
+    right: 0,
     backgroundColor: colors.error,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    ...shadows.small,
   },
-  buttonText: {
+  cancelButtonText: {
+    ...typography.button,
     color: colors.textLight,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  message: {
-    color: colors.text,
     fontSize: 14,
-    textAlign: 'center',
-    marginBottom: 10,
+  },
+  noiseLevelContainer: {
+    marginBottom: spacing.md,
+  },
+  noiseLevelLabel: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  noiseLevelBar: {
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: borderRadius.round,
+    overflow: 'hidden',
+  },
+  noiseLevelFill: {
+    height: '100%',
   },
   processingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(255,255,255,0.8)',
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
   },
-  processingText: {
-    marginTop: 10,
-    color: colors.text,
-    fontSize: 16,
+  processingCard: {
+    backgroundColor: colors.card,
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    width: '80%',
+    maxWidth: 300,
+    alignItems: 'center',
+    ...shadows.large,
   },
+  processingText: {
+    ...typography.body,
+    color: colors.text,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  processingSubtext: {
+    ...typography.caption,
+    color: colors.textSecondary,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.warning,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.sm,
+  },
+  offlineIcon: {
+    marginRight: spacing.xs,
+  },
+  offlineBannerText: {
+    ...typography.caption,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  audioButton: {
+    width: 32,
+    height: 32,
+    borderRadius: borderRadius.round,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: spacing.sm,
+    ...shadows.small,
+  }
 });
 
 export default AudioRecorder;

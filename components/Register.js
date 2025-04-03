@@ -3,15 +3,28 @@ import { View, TextInput, Text, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { auth } from '../firebase/config';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { colors, shadows } from '../styles/theme';
+import { useNavigation } from '@react-navigation/native';
 
-export default function Register({ onRegister, onBackToLogin }) {
+export default function Register({ onBackToLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const navigation = useNavigation();
 
   const handleRegister = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+    
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password should be at least 6 characters');
+      return;
+    }
+    
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      onRegister();
+      await createUserWithEmailAndPassword(auth, email, password);
+      // Auth state changes handled by the onAuthStateChanged listener in App.js
+      // No need to manually navigate
     } catch (error) {
       Alert.alert('Registration Error', error.message);
     }

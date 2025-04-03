@@ -1,24 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ActivityIndicator } from 'react-native'; // Importing ActivityIndicator
+import { StyleSheet, View, ActivityIndicator } from 'react-native';
 import { Audio } from 'expo-av';
 import AudioRecorder from './components/AudioRecorder';
-import LoadingAnimation from './components/LoadingAnimation'; // Importing LoadingAnimation
+import LoadingAnimation from './components/LoadingAnimation';
 import Login from './components/Login';
 import History from './components/History';
+import ChatroomScreen from './screens/ChatroomScreen';
 import { auth } from './firebase/config';
 import { onAuthStateChanged } from 'firebase/auth';
-import { colors } from './styles/theme';  // Add this import
+import { colors } from './styles/theme';
 
 export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [user, setUser] = useState(null);
   const [currentScreen, setCurrentScreen] = useState('main');
   const [savedTranscriptions, setSavedTranscriptions] = useState([]);
+  const [currentTranscriptions, setCurrentTranscriptions] = useState([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
       setIsLoggedIn(!!user);
       setIsLoading(false);
     });
@@ -39,6 +39,57 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  const handleScreenChange = (screenName, data = null) => {
+    setCurrentScreen(screenName);
+    if (data) {
+      setCurrentTranscriptions(data);
+    }
+  };
+
+  const handleSaveTranscriptions = (newGroup) => {
+    setSavedTranscriptions((prev) => [...prev, newGroup]);
+  };
+
+  const handleDeleteTranscription = (transcriptionId) => {
+    setSavedTranscriptions((prev) =>
+      prev.filter((transcription) => transcription.id !== transcriptionId)
+    );
+  };
+
+  const renderCurrentScreen = () => {
+    if (!isLoggedIn) {
+      return <Login onLogin={() => setIsLoggedIn(true)} />;
+    }
+
+    switch (currentScreen) {
+      case 'history':
+        return (
+          <History
+            savedTranscriptions={savedTranscriptions}
+            onBack={() => setCurrentScreen('main')}
+            onDelete={handleDeleteTranscription}
+          />
+        );
+      case 'chatroom':
+        return (
+          <ChatroomScreen
+            onBack={() => setCurrentScreen('main')}
+            transcriptions={currentTranscriptions}
+          />
+        );
+      default:
+        return (
+          <AudioRecorder
+            onSave={handleSaveTranscriptions}
+            onNavigateToHistory={() => handleScreenChange('history')}
+            onNavigateToChatroom={(transcriptions) =>
+              handleScreenChange('chatroom', transcriptions)
+            }
+          />
+        );
+    }
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.container, styles.centered]}>
@@ -47,36 +98,9 @@ export default function App() {
     );
   }
 
-  const handleSavedTranscriptions = (newGroup) => {
-    setSavedTranscriptions(prev => [...prev, newGroup]);
-  };
-
-  const handleNavigateToHistory = () => {
-    setCurrentScreen('history');
-  };
-
-  const handleDeleteTranscription = (transcriptionId) => {
-    setSavedTranscriptions(prev => 
-      prev.filter(transcription => transcription.id !== transcriptionId)
-    );
-  };
-
   return (
     <View style={styles.container}>
-      {!isLoggedIn ? (
-        <Login onLogin={() => setIsLoggedIn(true)} />
-      ) : currentScreen === 'main' ? (
-        <AudioRecorder 
-          onSave={handleSavedTranscriptions}
-          onNavigateToHistory={handleNavigateToHistory}
-        />
-      ) : (
-        <History 
-          savedTranscriptions={savedTranscriptions}
-          onBack={() => setCurrentScreen('main')}
-          onDelete={handleDeleteTranscription}
-        />
-      )}
+      {renderCurrentScreen()}
     </View>
   );
 }
@@ -84,7 +108,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,  // Update background color
+    backgroundColor: colors.background,
     paddingTop: 40,
   },
   centered: {

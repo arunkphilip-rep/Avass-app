@@ -4,7 +4,7 @@ import { Audio } from 'expo-av';
 import { uploadAudio } from '../services/api';
 import { colors, shadows } from '../styles/theme';
 
-const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
+const AudioRecorder = ({ onSave, onNavigateToHistory, onNavigateToChatroom }) => {
   const [recording, setRecording] = useState(null);
   const [sound, setSound] = useState(null);
   const [message, setMessage] = useState("Press button to start recording");
@@ -233,9 +233,14 @@ const AudioRecorder = ({ onSave, onNavigateToHistory }) => {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Voice Recorder</Text>
-        <TouchableOpacity onPress={onNavigateToHistory}>
-          <Text style={styles.historyButton}>History</Text>
-        </TouchableOpacity>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity onPress={onNavigateToChatroom} style={styles.headerButton}>
+            <Text style={styles.historyButton}>Chatroom</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onNavigateToHistory} style={styles.headerButton}>
+            <Text style={styles.historyButton}>History</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {renderProcessingOverlay()}
@@ -297,6 +302,13 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 20,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 15,
+  },
+  headerButton: {
+    paddingHorizontal: 5,
   },
   historyButton: {
     color: colors.primary,

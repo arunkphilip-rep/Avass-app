@@ -49,7 +49,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float16" if device == "cuda" else "float32"
 
 # ✅ Load Faster-Whisper Model
-whisper_model = WhisperModel("tiny.en", device=device, compute_type=compute_type)
+whisper_model = WhisperModel("large-v3", device=device, compute_type=compute_type)
 
 # ✅ TTS Configuration
 TTS_MODEL = "tts_models/en/ljspeech/vits"  # Use the model that worked

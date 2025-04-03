@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "avaass",
-    "slug": "avaass",
+    "name": "myApp",
+    "slug": "myApp",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -19,21 +19,10 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      },
-      "package": "com.thirdparty1717.avaass",
-      "permissions": [
-        "INTERNET",
-        "ACCESS_NETWORK_STATE",
-        "ACCESS_WIFI_STATE"
-      ]
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    },
-    "extra": {
-      "eas": {
-        "projectId": "fb4df1b3-5d5d-4ff2-b972-a7b92624e3cc"
-      }
     }
   }
 }
